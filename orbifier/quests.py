@@ -35,7 +35,8 @@ class Quest:
     started: float
     duration: float = 900.0  # duration in seconds
     auto_close: bool = True
-    auto_close: bool = True
+    cleanup_root: Path | None = None
+    cleanup_files: tuple[Path, ...] = ()
 
 
 def _tree_kill(proc) -> None:
@@ -90,9 +91,13 @@ class QuestTracker:
         exe_path: Path | None = None,
         duration_s: float | None = None,
         auto_close: bool = True,
+        cleanup_root: Path | None = None,
+        cleanup_files: tuple[Path, ...] = (),
     ) -> Quest:
         dur = float(duration_s) if duration_s is not None else self.duration
-        quest = Quest(self._next_id, name, proc, exe_path, self._clock(), dur, auto_close)
+        quest = Quest(self._next_id, name, proc, exe_path, self._clock(), dur, auto_close,
+                      Path(cleanup_root).expanduser().resolve() if cleanup_root else None,
+                      cleanup_files)
         self._next_id += 1
         self.quests.append(quest)
         return quest
@@ -136,25 +141,22 @@ class QuestTracker:
                 p.unlink()
 
             parent = p.parent
-            # Clean up helper files in source mode if no active quests remain
-            if not any(q.proc.poll() is None for q in list(self.quests)):
-                timer_pyw = parent / "_orbifier_timer.pyw"
-                if timer_pyw.exists():
+            # Only remove files this session created, once this folder is unused.
+            if not any(q.proc.poll() is None and q.exe_path
+                       and Path(q.exe_path).resolve().parent == parent
+                       for q in list(self.quests)):
+                for helper in quest.cleanup_files:
                     try:
-                        timer_pyw.unlink()
-                    except Exception:
-                        pass
-                cfg = parent / "pyvenv.cfg"
-                if cfg.exists():
-                    try:
-                        cfg.unlink()
+                        if Path(helper).resolve().parent == parent:
+                            Path(helper).unlink(missing_ok=True)
                     except Exception:
                         pass
 
-            # Recursively delete empty parent directories up to Desktop or drive root
-            desktop = Path.home() / "Desktop"
+            # Remove empty descendants, preserving the selected cleanup boundary.
+            desktop = quest.cleanup_root or Path.home() / "Desktop"
             curr = parent
-            while curr != desktop and curr.parent != curr:
+            while (curr != desktop and curr.parent != curr
+                   and (quest.cleanup_root is None or curr.is_relative_to(desktop))):
                 try:
                     if not any(curr.iterdir()):
                         curr.rmdir()

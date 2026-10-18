@@ -219,14 +219,22 @@ def database_mode(db: DiscordGamesDB, faker) -> None:
         print(f"  {Colors.GRAY}Other executables: {', '.join(all_exes[1:3])}{Colors.RESET}")
         if len(all_exes) > 3:
             print(f"  {Colors.GRAY}(+{len(all_exes) - 3} more executables available){Colors.RESET}")
-    print(f"  Path: {Colors.GRAY}{faker.desktop_path / config.FAKE_EXE_DIR / exe_name}{Colors.RESET}")
+    raw_dir = input("Output folder (blank for Desktop default): ").strip().strip('"')
+    from pathlib import Path
+    output_dir = Path(raw_dir).expanduser() if raw_dir else None
+    try:
+        target = faker.game_path(exe_name, output_dir)
+    except ValueError as e:
+        print_color(f"[ERROR] {e}", Colors.RED)
+        return
+    print(f"  Path: {Colors.GRAY}{target}{Colors.RESET}")
 
     if not ask_confirm():
         print_color("\n[!] Operation cancelled", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return
 
-    result = faker.create_fake_game(exe_name)
+    result = faker.create_fake_game(exe_name, output_dir=output_dir)
     if result:
         print()
         faker.launch_executable(result)

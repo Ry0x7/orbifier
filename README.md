@@ -49,7 +49,9 @@ It is an **educational project** based on Strykey's [orbshacker](https://github.
 
 1. You pick a game on the Database screen (or type an exe name on Manual EXE), and select the desired timer duration.
 2. Orbifier copies itself (the frozen exe) or `pythonw.exe` (source run) into
-   `Desktop\Win64\` under the game's executable name, e.g. `hollow_knight.exe`.
+   the selected **OUTPUT FOLDER** under the game's executable name, e.g. `hollow_knight.exe`.
+   Manual and Database screens share this folder selection; it defaults to `Desktop\Win64\`.
+   Use **BROWSE** or type a directory. The CLI also prompts for an optional output folder.
 3. It launches that copy with a compact keep-alive window displaying the active game title and countdown timer.
 4. Discord scans running top-level windows, detects the game process name, and treats the game as actively played.
    Discord has to be running for detection to work.
@@ -77,9 +79,36 @@ extra things into your Steam folder:
 - `steamapps\appmanifest_<appid>.acf`, a minimal manifest for the chosen app id
 - a copy of the placeholder at `steamapps\common\<installdir>\<exe>`
 
+Choose your Steam installation, another Steam library root, or its `steamapps` folder
+using **STEAM PATH / BROWSE**. Enter a game name or a numeric Steam App ID in
+**NAME / APP ID**, then click **SEARCH**. App IDs work without a store search.
+**INSTALL FOLDER** overrides the folder name under `steamapps\common`; leave it blank
+to use the detected name. **OVERRIDE EXE** accepts a relative path, including subfolders.
+The resolved path is shown before files are created. Paths ending outside the selected
+install folder are rejected.
+
+**INSTALLED MANIFEST** is selected by default and writes the minimal `AppState` fields
+with `StateFlags "4"`. Uncheck it for the previous staged manifest (`StateFlags "1026"`).
+The CLI offers the same settings. Existing manifests and executables are preserved;
+if a previous placeholder setup remains, remove those known placeholder files or use
+another library before running the setup again.
+
+For the EA SPORTS FC 27 instructions:
+
+1. Choose your Steam library or `steamapps` folder.
+2. Search for App ID `4080220`.
+3. Set **INSTALL FOLDER** to `EA SPORTS FC 27` (or keep the detected value).
+4. Use `fc27.exe` as the executable. It is mapped automatically for this App ID;
+   `..\EA SPORTS FC 27\fc27.exe` also resolves to the same destination.
+5. Keep **INSTALLED MANIFEST** checked, then **CREATE & LAUNCH**.
+
+This creates `steamapps\appmanifest_4080220.acf` and
+`steamapps\common\EA SPORTS FC 27\fc27.exe` without duplicating the game folder.
+
 Orbifier does **not** clean these up automatically. STOP removes the placeholder exe, but the
-`.acf` file and the `common\<installdir>` folder stay until you delete them, and Steam may
-show the game as installed in the meantime.
+`.acf` file remains until you delete it, and Steam may show the game as installed in
+the meantime. Empty game subfolders may be removed during cleanup; the selected
+output folder and the library's `common` directory are preserved.
 
 ## Settings
 
@@ -87,7 +116,7 @@ Edit `settings.py` next to the app (source run) and restart.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `VERSION` | `"1.2.0"` | Version shown in the window and used by the update check. |
+| `VERSION` | `"1.3.0"` | Version shown in the window and used by the update check. |
 | `DEVELOPER` | `"Ry0x7"` | Name shown in the status bar. |
 | `GITHUB_REPO_OWNER` | `"Ry0x7"` | Owner of the repo the exe checks for updates. |
 | `GITHUB_REPO_NAME` | `"orbifier"` | Repo the exe checks for updates. |

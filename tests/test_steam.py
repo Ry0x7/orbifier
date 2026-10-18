@@ -1,6 +1,8 @@
 """Tests for steam.py – pure functions only (no network calls)."""
 
 from pathlib import Path
+import pytest
+from orbifier import steam
 
 from orbifier.steam import (
     _pick_windows_exe, sanitize_installdir, sanitize_executable, steam_fake_exe_path,
@@ -88,6 +90,86 @@ class TestPickWindowsExe:
 
     def test_empty_launch(self):
         assert _pick_windows_exe({}) is None
+
+
+class TestCustomSteamSetup:
+    def test_cli_fc27_setup_writes_matching_manifest_and_executable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(steam, "_resolve_steam_path", lambda: tmp_path / "steamapps")
+        monkeypatch.setattr(steam, "fetch_steam_app_info", lambda appid: {
+            "name": "EA SPORTS FC™ 27", "installdir": "EA SPORTS FC 27",
+            "executable": "fc27.exe", "depot_id": None})
+        answers = iter(["4080220", "EA SPORTS FC 27", r"..\EA SPORTS FC 27\fc27.exe", "", ""])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+        monkeypatch.setattr(steam, "ask_confirm", lambda: True)
+        monkeypatch.setattr(steam, "loading_animation", lambda *a: None)
+        launched = []
+
+        class Placeholder:
+            def copy_exe_to(self, path):
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b"test placeholder")
+
+            def launch_executable(self, path):
+                launched.append(path)
+
+        steam.steam_quest_mode(Placeholder())
+        expected = tmp_path / "steamapps/common/EA SPORTS FC 27/fc27.exe"
+        assert launched == [expected]
+        assert expected.read_bytes() == b"test placeholder"
+        manifest = tmp_path / "steamapps/appmanifest_4080220.acf"
+        assert '"StateFlags"\t\t"4"' in manifest.read_text(encoding="utf-8")
+
+    def test_cli_can_override_detected_library(self, tmp_path, monkeypatch):
+        detected = tmp_path / "Steam"
+        detected.mkdir()
+        chosen = tmp_path / "OtherLibrary"
+        monkeypatch.setattr(steam, "get_steam_path", lambda: detected)
+        monkeypatch.setattr("builtins.input", lambda *a: str(chosen))
+        assert steam._resolve_steam_path() == chosen
+
+    def test_fc27_metadata_uses_actual_exe(self, monkeypatch):
+        monkeypatch.setattr(steam, "loading_animation", lambda *a: None)
+        monkeypatch.setattr(steam, "fetch_json", lambda *a: {
+            "data": {"4080220": {"common": {"name": "EA SPORTS FC™ 27"},
+                "config": {"installdir": "EA SPORTS FC 27", "launch": {
+                    "0": {"executable": "link2ea://launch"}}}}}})
+        assert steam.fetch_steam_app_info(4080220)["executable"] == "fc27.exe"
+
+    def test_parent_relative_path_does_not_duplicate_folder(self, tmp_path):
+        target = steam_fake_exe_path(tmp_path, "EA SPORTS FC 27",
+                                     r"..\EA SPORTS FC 27\fc27.exe")
+        assert target == tmp_path / "steamapps/common/EA SPORTS FC 27/fc27.exe"
+
+    @pytest.mark.parametrize("exe", ["../../outside.exe", "../Other/game.exe",
+                                      "C:/outside.exe", "//server/share/game.exe"])
+    def test_rejects_path_outside_install_directory(self, tmp_path, exe):
+        with pytest.raises(ValueError):
+            steam_fake_exe_path(tmp_path, "Game", exe)
+
+    def test_accepts_steamapps_or_library_root(self, tmp_path):
+        expected = tmp_path / "steamapps/common/Game/game.exe"
+        assert steam_fake_exe_path(tmp_path / "steamapps", "Game", "game.exe") == expected
+
+    def test_minimal_installed_manifest_matches_instructions(self, tmp_path):
+        path = steam.generate_appmanifest(4080220, "EA SPORTS FC™ 27", "EA SPORTS FC 27",
+                                          tmp_path / "steamapps", manifest_mode="installed")
+        assert path == tmp_path / "steamapps/appmanifest_4080220.acf"
+        content = path.read_text(encoding="utf-8")
+        assert '"StateFlags"\t\t"4"' in content
+        assert '"name"\t\t"EA SPORTS FC™ 27"' in content
+        assert '"installdir"\t\t"EA SPORTS FC 27"' in content
+        assert "StagedDepots" not in content
+
+    def test_legacy_manifest_is_still_available(self, tmp_path):
+        path = steam.generate_appmanifest(123, "Game", "Game", tmp_path)
+        assert '"StateFlags"\t\t"1026"' in path.read_text()
+
+    def test_does_not_overwrite_existing_manifest(self, tmp_path):
+        path = tmp_path / "steamapps/appmanifest_123.acf"
+        path.parent.mkdir()
+        path.write_text("existing installation")
+        assert steam.generate_appmanifest(123, "Game", "Game", tmp_path) is None
+        assert path.read_text() == "existing installation"
 
     def test_normalises_backslashes(self):
         launch = {

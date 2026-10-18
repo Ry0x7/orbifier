@@ -2,11 +2,10 @@
 steam.py – Steam quest helpers: registry, API, appmanifest, and quest mode UI.
 """
 
-import os
 import re
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import config, textmatch
 from .ui import (
@@ -80,7 +79,8 @@ def fetch_steam_app_info(appid: int) -> dict | None:
 
         name       = common_cfg.get("name", f"App {appid}")
         installdir = app_cfg.get("installdir", name)
-        executable = _pick_windows_exe(app_cfg.get("launch", {}))
+        executable = ("fc27.exe" if appid == 4080220
+                      else _pick_windows_exe(app_cfg.get("launch", {})))
 
         if not executable:
             executable = installdir.split("/")[-1] + ".exe"
@@ -209,20 +209,39 @@ def sanitize_executable(executable: str) -> str:
     return "/".join(parts)
 
 
-def generate_appmanifest(appid, name, installdir, steam_path, depot_id=None):
-    """Generate a realistic appmanifest_<appid>.acf (StateFlags 1026)."""
+def steamapps_path(steam_path: Path) -> Path:
+    """Accept either a Steam/library root or its steamapps directory."""
+    path = Path(steam_path).expanduser()
+    return path if path.name.lower() == "steamapps" else path / "steamapps"
+
+
+def generate_appmanifest(appid, name, installdir, steam_path, depot_id=None,
+                         manifest_mode="legacy"):
+    """Write a new manifest; preserve any existing Steam installation."""
+    if not str(appid).isascii() or not str(appid).isdigit() or int(appid) <= 0:
+        raise ValueError("Steam App ID must be a positive integer.")
+    if manifest_mode not in ("legacy", "installed"):
+        raise ValueError("Choose installed or legacy manifest mode.")
+    name = name.replace('"', "'").replace("\\", "/").replace("\n", " ").replace("\r", " ")
     acf_content = _ACF_TEMPLATE.format(
         appid=appid,
-        launcher=str(steam_path / "steam.exe").replace("/", "\\\\"),
+        launcher=str((get_steam_path() or steamapps_path(steam_path).parent) / "steam.exe").replace("/", "\\\\"),
         name=name.replace('"', "'"),
         installdir=sanitize_installdir(installdir),  # must match steam_fake_exe_path
         owner=get_steam_user_id(),
         staged=_STAGED_DEPOT_TEMPLATE.format(depot_id=depot_id) if depot_id else "",
     )
-    acf_path = steam_path / "steamapps" / f"appmanifest_{appid}.acf"
+    if manifest_mode == "installed":
+        acf_content = ('"AppState"\n{\n'
+                       f'\t"appid"\t\t"{int(appid)}"\n'
+                       f'\t"name"\t\t"{name}"\n'
+                       '\t"StateFlags"\t\t"4"\n'
+                       f'\t"installdir"\t\t"{sanitize_installdir(installdir)}"\n'
+                       '}\n')
+    acf_path = steamapps_path(steam_path) / f"appmanifest_{int(appid)}.acf"
     try:
         acf_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(acf_path, "w", encoding="utf-8") as f:
+        with open(acf_path, "x", encoding="utf-8") as f:
             f.write(acf_content)
         print_color(f"[OK] Created appmanifest: {acf_path}", Colors.GREEN, bold=True)
         return acf_path
@@ -239,8 +258,31 @@ def steam_fake_exe_path(steam_path: Path, installdir: str, executable: str) -> P
     Both parts are sanitized so names like "Call of Duty®: Modern Warfare®"
     become valid Windows paths.
     """
-    exe_full_path = f"{sanitize_installdir(installdir)}/{sanitize_executable(executable)}"
-    return steam_path / "steamapps" / "common" / exe_full_path.replace("/", os.sep)
+    install = steamapps_path(steam_path) / "common" / sanitize_installdir(installdir)
+    return executable_path(install, executable)
+
+
+def executable_path(directory: Path, executable: str) -> Path:
+    """Resolve a relative EXE path without silently discarding parent segments.
+
+    Parent segments may return to the selected directory, as in
+    ../EA SPORTS FC 27/fc27.exe, but the final path must stay inside it.
+    """
+    raw = executable.strip().replace("\\", "/")
+    windows_path = PureWindowsPath(raw)
+    if windows_path.drive or windows_path.root:
+        raise ValueError("Enter an executable path relative to the selected folder.")
+    parts = [p if p in (".", "..") else sanitize_path_component(p)
+             for p in raw.split("/") if p]
+    if not parts or parts[-1] in (".", ".."):
+        raise ValueError("Enter an executable filename, for example fc27.exe.")
+    if not parts[-1].lower().endswith(".exe"):
+        parts[-1] += ".exe"
+    base = Path(directory).expanduser().resolve()
+    target = base.joinpath(*parts).resolve()
+    if not target.is_relative_to(base):
+        raise ValueError("Executable path must stay inside the selected install/output folder.")
+    return target
 
 
 def create_steam_fake_exe(faker, fake_exe_path: Path, executable: str) -> bool:
@@ -261,20 +303,26 @@ def _resolve_steam_path() -> Path | None:
     """Auto-detect or prompt for Steam path."""
     steam_path = get_steam_path()
     if steam_path and steam_path.exists():
-        return steam_path
-    print_color("[!] Could not locate Steam automatically.", Colors.YELLOW)
+        print_color(f"[*] Detected Steam: {steam_path}", Colors.CYAN)
+    else:
+        steam_path = None
+        print_color("[!] Could not locate Steam automatically.", Colors.YELLOW)
     manual = input(
-        f"{Colors.BOLD}Enter Steam path manually{Colors.RESET}"
-        " (e.g. C:/Program Files (x86)/Steam): "
-    ).strip()
+        f"{Colors.BOLD}Steam/library root or steamapps folder{Colors.RESET}"
+        " (blank to use detected location): "
+    ).strip().strip('"')
     if not manual:
+        if steam_path:
+            return steam_path
         print_color("[!] No Steam path provided. Aborting.", Colors.RED)
         return None
-    return Path(manual)
+    return Path(manual).expanduser()
 
 
 def _pick_steam_game(query: str) -> dict | None:
     """Search Steam and let the user choose a game."""
+    if query.isascii() and query.isdigit() and int(query) > 0:
+        return {"id": int(query), "name": f"App {int(query)}"}
     results = search_steam_games(query)
     if not results:
         print_color(f"\n[ERROR] No results found for '{query}'", Colors.RED)
@@ -329,7 +377,7 @@ def steam_quest_mode(faker) -> None:
         return
     print_color(f"[OK] Steam found at: {steam_path}", Colors.GREEN)
 
-    query = input(f"\n{Colors.BOLD}Search game{Colors.RESET} (or 'back'): ").strip()
+    query = input(f"\n{Colors.BOLD}Game name or Steam App ID{Colors.RESET} (or 'back'): ").strip()
     if query.lower() in ('back', 'b', ''):
         return
 
@@ -346,28 +394,46 @@ def steam_quest_mode(faker) -> None:
     print(f"  Install dir: {Colors.CYAN}{info['installdir']}{Colors.RESET}")
     print(f"  Executable:  {Colors.CYAN}{info['executable']}{Colors.RESET}")
 
+    install_override = input("Install folder override (under steamapps/common; blank to keep): ").strip()
+    if install_override:
+        info['installdir'] = install_override
+    info['installdir'] = sanitize_installdir(info['installdir'])
     override = input(f"\n{Colors.BOLD}Override executable path?{Colors.RESET} [leave empty to keep]: ").strip()
     if override:
         info['executable'] = override.replace("\\", "/")
 
-    fake_exe_path = steam_fake_exe_path(steam_path, info['installdir'], info['executable'])
+    mode = input("Manifest style [installed/legacy] (default installed, StateFlags 4): ").strip().lower() or "installed"
+    if mode not in ("installed", "legacy"):
+        print_color("[ERROR] Choose installed or legacy.", Colors.RED)
+        return
+    try:
+        fake_exe_path = steam_fake_exe_path(steam_path, info['installdir'], info['executable'])
+    except ValueError as e:
+        print_color(f"[ERROR] {e}", Colors.RED)
+        return
+    if fake_exe_path.exists():
+        print_color(f"[ERROR] Executable already exists: {fake_exe_path}", Colors.RED)
+        return
 
     print(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-    print(f"  AppManifest: {Colors.GRAY}{steam_path / 'steamapps' / f'appmanifest_{appid}.acf'}{Colors.RESET}")
+    print(f"  AppManifest: {Colors.GRAY}{steamapps_path(steam_path) / f'appmanifest_{appid}.acf'}{Colors.RESET}")
     print(f"  Fake exe:    {Colors.GRAY}{fake_exe_path}{Colors.RESET}")
+    print(f"  Manifest:    {mode}")
 
     if not ask_confirm():
         print_color("\n[!] Operation cancelled.", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return
 
-    acf = generate_appmanifest(appid, info['name'], info['installdir'], steam_path, depot_id=info.get('depot_id'))
+    acf = generate_appmanifest(appid, info['name'], info['installdir'], steam_path,
+                               depot_id=info.get('depot_id'), manifest_mode=mode)
     if not acf:
         print_color("[ERROR] Failed to create appmanifest. Aborting.", Colors.RED)
         time.sleep(config.SLEEP_SHORT)
         return
 
     if not create_steam_fake_exe(faker, fake_exe_path, info['executable']):
+        acf.unlink(missing_ok=True)
         time.sleep(config.SLEEP_SHORT)
         return
 

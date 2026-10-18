@@ -1,4 +1,5 @@
 """Tests for quests.py – QuestTracker logic with a fake clock and fake processes."""
+from pathlib import Path
 
 from orbifier.quests import (
     QuestTracker, format_mmss, RUNNING, DONE, STOPPED,
@@ -138,3 +139,53 @@ class TestQuestTracker:
         tracker.stop(q)
         assert not exe.exists()
         assert not sub.exists()
+
+    def test_stop_preserves_selected_output_directory(self, tmp_path):
+        tracker, _clock = make_tracker()
+        output = tmp_path / "chosen"
+        exe = output / "Bin/game.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_bytes(b"placeholder")
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=output)
+        tracker.stop(quest)
+        assert output.is_dir()
+        assert not exe.parent.exists()
+
+    def test_cleanup_preserves_unowned_helper_files(self, tmp_path):
+        tracker, _clock = make_tracker()
+        exe = tmp_path / "game.exe"
+        exe.write_bytes(b"placeholder")
+        config = tmp_path / "pyvenv.cfg"
+        config.write_text("existing environment")
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=tmp_path)
+        tracker.stop(quest)
+        assert config.read_text() == "existing environment"
+
+    def test_owned_helpers_are_removed_after_last_quest_in_folder(self, tmp_path):
+        tracker, _clock = make_tracker()
+        helper = tmp_path / "_orbifier_timer.pyw"
+        helper.write_text("owned helper")
+        a, b = tmp_path / "a.exe", tmp_path / "b.exe"
+        a.write_bytes(b"placeholder")
+        b.write_bytes(b"placeholder")
+        first = tracker.add("A", FakeProc(), a, cleanup_root=tmp_path,
+                            cleanup_files=(helper,))
+        second = tracker.add("B", FakeProc(), b, cleanup_root=tmp_path,
+                             cleanup_files=(helper,))
+        tracker.stop(first)
+        assert helper.exists()
+        tracker.stop(second)
+        assert not helper.exists()
+        assert tmp_path.exists()
+
+    def test_tilde_output_folder_is_preserved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        output = tmp_path / "selected"
+        output.mkdir()
+        exe = output / "game.exe"
+        exe.write_bytes(b"placeholder")
+        tracker, _clock = make_tracker()
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=Path("~/selected"))
+        tracker.stop(quest)
+        assert output.is_dir()

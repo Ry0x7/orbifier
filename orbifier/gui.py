@@ -18,7 +18,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 from . import config, ui
 from . import steam
@@ -405,6 +405,7 @@ class OrbifierApp:
 
         self.db_results: list = []
         self.steam_results: list = []
+        self.output_directory = tk.StringVar(value=str(self.faker.desktop_path / config.FAKE_EXE_DIR))
 
         self.quests = QuestTracker(config.QUEST_MINUTES * 60)
         self.quest_panels: list = []
@@ -706,6 +707,7 @@ class OrbifierApp:
     # ── Database ──────────────────────────────────────────────────────────────
     def _build_database(self) -> tk.Frame:
         frame = self._screen("DATABASE QUEST")
+        self._directory_row(frame, self.output_directory, "OUTPUT FOLDER")
         row = self._row(frame)
         self._label(row, "SEARCH").pack(side="left")
         self.db_query = self._entry(row, width=44)
@@ -714,7 +716,7 @@ class OrbifierApp:
         PixelButton(row, "SEARCH", self.db_search, width=120, height=38,
                     scale=2).pack(side="left")
 
-        self.db_list = self._listbox(frame, height=8)
+        self.db_list = self._listbox(frame, height=6)
         self.db_list.pack(side="top", fill="x", padx=12, pady=4)
 
         row2 = self._row(frame)
@@ -793,7 +795,11 @@ class OrbifierApp:
             self.log("[ERROR] No Windows executable found for this game", "err")
             self.log("[!] Type the exe name in OVERRIDE EXE and launch again", "warn")
             return
-        target = self.faker.desktop_path / config.FAKE_EXE_DIR / exe_name
+        try:
+            target = self.faker.game_path(exe_name, Path(self.output_directory.get()))
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
         exe_hint = ""
         candidates = self.db._filter_win32_exes(game, skip_patterns=True)
         if not self.db_override.get().strip() and len(candidates) > 1:
@@ -832,11 +838,11 @@ class OrbifierApp:
     # ── Manual ────────────────────────────────────────────────────────────────
     def _build_manual(self) -> tk.Frame:
         frame = self._screen("MANUAL EXE")
+        self._directory_row(frame, self.output_directory, "OUTPUT FOLDER")
         for line, fg in (
             ("Enter the exact process name Discord expects.", TEXT),
             ("Examples:  TslGame.exe (PUBG)   League of Legends.exe   Overwatch.exe", MUTED),
             ("The name must match exactly (case-sensitive on some systems).", MUTED),
-            (f"Fake exe goes to: {self.faker.desktop_path / config.FAKE_EXE_DIR}", MUTED),
         ):
             self._label(self._row(frame, pady=2), line, fg=fg).pack(side="left")
         row = self._row(frame, pady=16)
@@ -866,7 +872,11 @@ class OrbifierApp:
         if not exe_name:
             self.log("[!] Type an executable name first", "warn")
             return
-        target = self.faker.desktop_path / config.FAKE_EXE_DIR / exe_name
+        try:
+            target = self.faker.game_path(exe_name, Path(self.output_directory.get()))
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
         try:
             mins = float(self.manual_minutes.get().strip())
             if mins <= 0:
@@ -898,13 +908,14 @@ class OrbifierApp:
         minutes: float = 15.0,
         auto_close: bool = True,
     ) -> None:
-        """Shared by Database and Manual: copy exe to Desktop/<dir>/ and launch it."""
+        """Shared by Database and Manual: copy to the selected folder and launch."""
         faker = self.faker
+        output_dir = Path(self.output_directory.get())
         duration_s = max(1.0, float(minutes) * 60.0)
         start_time = time.time()
 
         def work():
-            path = faker.create_fake_game(exe_name)
+            path = faker.create_fake_game(exe_name, output_dir=output_dir)
             if not path:
                 return False
             proc = faker.launch_executable(
@@ -918,7 +929,8 @@ class OrbifierApp:
         def done(ok):
             if ok:
                 path, proc = ok
-                self._track_quest(path, proc, duration_s=duration_s, auto_close=auto_close)
+                self._track_quest(path, proc, duration_s=duration_s, auto_close=auto_close,
+                                  cleanup_root=output_dir)
                 self.log(done_msg, "ok")
                 self.log("[!] IMPORTANT: Discord MUST be running for the spoofing to work", "warn")
                 self.log("[*] Keep the process running or in tray until quest is complete", "info")
@@ -926,25 +938,59 @@ class OrbifierApp:
         self.run_task(f"Creating {exe_name}", work, done)
 
     # ── Steam ─────────────────────────────────────────────────────────────────
+    def _directory_row(self, frame, variable, label):
+        row = self._row(frame, pady=2)
+        self._label(row, label).pack(side="left")
+        entry = self._entry(row, width=38)
+        entry.configure(textvariable=variable)
+        entry.pack(side="left", fill="x", expand=True, padx=8, ipady=3)
+
+        def browse():
+            chosen = filedialog.askdirectory(parent=self.root, initialdir=variable.get() or str(Path.home()))
+            if chosen:
+                variable.set(chosen)
+
+        PixelButton(row, "BROWSE", browse, width=100, height=30, scale=2).pack(side="right")
+
     def _build_steam(self) -> tk.Frame:
         frame = self._screen("STEAM QUEST")
         row = self._row(frame, pady=2)
         self._label(row, "STEAM PATH").pack(side="left")
-        self.steam_path = self._entry(row, width=46)
+        self.steam_path = self._entry(row, width=34)
         self.steam_path.pack(side="left", padx=8, ipady=3)
         PixelButton(row, "DETECT", self.steam_detect, width=120, height=36,
                     scale=2).pack(side="left")
+        def browse_steam():
+            chosen = filedialog.askdirectory(parent=self.root, title="Select Steam library or steamapps folder")
+            if chosen:
+                self.steam_path.delete(0, "end")
+                self.steam_path.insert(0, chosen)
+        PixelButton(row, "BROWSE", browse_steam, width=100, height=36,
+                    scale=2).pack(side="left", padx=4)
 
         row2 = self._row(frame, pady=2)
-        self._label(row2, "SEARCH    ").pack(side="left")
-        self.steam_query = self._entry(row2, width=46)
+        self._label(row2, "NAME / APP ID").pack(side="left")
+        self.steam_query = self._entry(row2, width=36)
         self.steam_query.pack(side="left", padx=8, ipady=3)
         self.steam_query.bind("<Return>", lambda _e: self.steam_search())
         PixelButton(row2, "SEARCH", self.steam_search, width=120, height=36,
                     scale=2).pack(side="left")
 
-        self.steam_list = self._listbox(frame, height=6)
+        self.steam_list = self._listbox(frame, height=3)
         self.steam_list.pack(side="top", fill="x", padx=12, pady=4)
+
+        details = self._row(frame, pady=2)
+        self._label(details, "INSTALL FOLDER").pack(side="left")
+        self.steam_install = self._entry(details, width=26)
+        self.steam_install.pack(side="left", padx=4, ipady=3)
+        self._label(details, "blank = detected", fg=MUTED).pack(side="left")
+
+        mode_row = self._row(frame, pady=2)
+        self.steam_installed = tk.BooleanVar(value=True)
+        tk.Checkbutton(mode_row, text="INSTALLED MANIFEST (4)  /  unchecked: LEGACY (1026)",
+                       variable=self.steam_installed, bg=BG, fg=TEXT, selectcolor=PANEL_DARK,
+                       activebackground=BG, activeforeground=TEXT,
+                       font=self.font_small).pack(side="left")
 
         row3 = self._row(frame, pady=2)
         self._label(row3, "OVERRIDE EXE").pack(side="left")
@@ -998,7 +1044,10 @@ class OrbifierApp:
             self.steam_list.selection_set(0)
             self.log(f"[OK] Found {len(results)} result(s)", "ok")
 
-        self.run_task(f"Searching Steam for '{query}'", lambda: steam.search_steam_games(query), done)
+        if query.isascii() and query.isdigit() and int(query) > 0:
+            done([{"id": int(query), "name": f"App {int(query)}"}])
+        else:
+            self.run_task(f"Searching Steam for '{query}'", lambda: steam.search_steam_games(query), done)
 
     def steam_create(self):
         if self._guard_busy():
@@ -1015,6 +1064,7 @@ class OrbifierApp:
         game = self.steam_results[sel[0]]
         appid = int(game["id"])
         override = self.steam_override.get().strip()
+        install_override = self.steam_install.get().strip()
         self.log(f"[OK] Selected: {game['name']} (AppID: {appid})", "ok")
 
         def got_info(info):
@@ -1025,16 +1075,29 @@ class OrbifierApp:
                 self.log("[*] Using the store name; set OVERRIDE EXE to the real exe path", "info")
                 info = {"name": game["name"], "installdir": game["name"],
                         "executable": "Game.exe", "depot_id": None}
+                if appid == 4080220:
+                    info.update(name="EA SPORTS FC™ 27", installdir="EA SPORTS FC 27", executable="fc27.exe")
             if override:
                 info["executable"] = override.replace("\\", "/")
+            if install_override:
+                info["installdir"] = install_override
+            info["installdir"] = steam.sanitize_installdir(info["installdir"])
             self._steam_confirm_and_write(steam_path, appid, info)
 
         self.run_task(f"Fetching Steam app info for {appid}",
                       lambda: steam.fetch_steam_app_info(appid), got_info)
 
     def _steam_confirm_and_write(self, steam_path: Path, appid: int, info: dict):
-        fake_exe_path = steam.steam_fake_exe_path(steam_path, info["installdir"], info["executable"])
-        acf_path = steam_path / "steamapps" / f"appmanifest_{appid}.acf"
+        try:
+            fake_exe_path = steam.steam_fake_exe_path(steam_path, info["installdir"], info["executable"])
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
+        acf_path = steam.steamapps_path(steam_path) / f"appmanifest_{appid}.acf"
+        if acf_path.exists() or fake_exe_path.exists():
+            self.log("[!] Manifest or executable already exists. Choose an unused library/folder or remove an earlier placeholder setup.", "err")
+            return
+        manifest_mode = "installed" if self.steam_installed.get() else "legacy"
         warn = "" if steam_path.exists() else "\n\nWARNING: Steam path does not exist!"
 
         try:
@@ -1049,6 +1112,7 @@ class OrbifierApp:
             "Orbifier - Steam Quest",
             f"Name: {info['name']}\nInstall dir: {info['installdir']}\n"
             f"Executable: {info['executable']}\n\nAppManifest: {acf_path}\n"
+            f"Manifest mode: {manifest_mode}\n"
             f"Fake exe: {fake_exe_path}\n"
             f"Timer: {mins:g} minutes  ·  Auto-close: {'Yes' if auto_close else 'No'}{warn}\n\n"
             "Use at your own risk.\nCreate and launch?",
@@ -1062,11 +1126,13 @@ class OrbifierApp:
 
         def work():
             acf = steam.generate_appmanifest(appid, info["name"], info["installdir"],
-                                             steam_path, depot_id=info.get("depot_id"))
+                                             steam_path, depot_id=info.get("depot_id"),
+                                             manifest_mode=manifest_mode)
             if not acf:
                 ui.print_color("[ERROR] Failed to create appmanifest. Aborting.", Colors.RED)
                 return False
             if not steam.create_steam_fake_exe(faker, fake_exe_path, info["executable"]):
+                acf.unlink(missing_ok=True)
                 return False
             return faker.launch_executable(
                 fake_exe_path,
@@ -1077,7 +1143,8 @@ class OrbifierApp:
 
         def done(proc):
             if proc:
-                self._track_quest(fake_exe_path, proc, duration_s=duration_s, auto_close=auto_close)
+                self._track_quest(fake_exe_path, proc, duration_s=duration_s, auto_close=auto_close,
+                                  cleanup_root=steam.steamapps_path(steam_path) / "common")
                 self.log("[OK] Steam Quest setup complete!", "ok")
                 self.log("[!] Discord MUST be running for detection to work.", "warn")
                 self.log("[*] Keep the process running or in tray until the quest is done.", "info")
@@ -1098,6 +1165,7 @@ class OrbifierApp:
         proc,
         duration_s: float | None = None,
         auto_close: bool = True,
+        cleanup_root: Path | None = None,
     ) -> None:
         """Register a launched fake process in the ACTIVE QUESTS panels."""
         if not proc:
@@ -1108,6 +1176,9 @@ class OrbifierApp:
             Path(exe_path),
             duration_s=duration_s,
             auto_close=auto_close,
+            cleanup_root=cleanup_root,
+            cleanup_files=tuple(p for p in self.faker.created_helpers
+                                if p.parent == Path(exe_path).resolve().parent),
         )
         self._refresh_quests()
 

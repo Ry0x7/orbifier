@@ -247,6 +247,7 @@ class GameFaker:
         self._frozen = _is_frozen()
         self._source_exe = _find_source_exe()
         self.desktop_path = Path.home() / "Desktop"
+        self.created_helpers: set[Path] = set()
 
     def copy_exe_to(self, target_path: Path) -> None:
         """Copy the faker executable to *target_path*.
@@ -254,6 +255,12 @@ class GameFaker:
         In source mode, also creates a ``_orbifier_timer.pyw`` next to
         the target so the renamed Python interpreter can run it.
         """
+        if target_path.exists():
+            raise FileExistsError(f"Executable already exists; choose another folder: {target_path}")
+        timer_script = target_path.parent / "_orbifier_timer.pyw"
+        if (not self._frozen and timer_script.exists()
+                and timer_script.read_text(encoding="utf-8", errors="replace") != _TIMER_PYW_CODE):
+            raise FileExistsError(f"Helper file already exists; choose another folder: {timer_script}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self._source_exe, target_path)
 
@@ -266,24 +273,27 @@ class GameFaker:
             for venv_cfg in venv_candidates:
                 if venv_cfg.exists():
                     try:
-                        shutil.copy2(venv_cfg, target_path.parent / "pyvenv.cfg")
+                        destination = target_path.parent / "pyvenv.cfg"
+                        if not destination.exists():
+                            shutil.copy2(venv_cfg, destination)
+                            self.created_helpers.add(destination.resolve())
                     except Exception:
                         pass
                     break
 
-            timer_script = target_path.parent / "_orbifier_timer.pyw"
-            # rewrite stale scripts left by older versions
-            if (not timer_script.exists()
-                    or timer_script.read_text(encoding="utf-8", errors="replace") != _TIMER_PYW_CODE):
+            if not timer_script.exists():
                 timer_script.write_text(_TIMER_PYW_CODE, encoding="utf-8")
+                self.created_helpers.add(timer_script.resolve())
 
-    def create_fake_game(self, exe_name: str) -> Path | None:
-        """Create fake game executable under Desktop/<FAKE_EXE_DIR>/."""
-        if not exe_name.lower().endswith('.exe'):
-            exe_name += '.exe'
-        exe_name = exe_name.replace('\\', '/')
-        target_path = self.desktop_path / config.FAKE_EXE_DIR / exe_name
+    def game_path(self, exe_name: str, output_dir: Path | None = None) -> Path:
+        """Resolve the same validated destination used by previews and creation."""
+        from .steam import executable_path
+        return executable_path(output_dir or self.desktop_path / config.FAKE_EXE_DIR, exe_name)
+
+    def create_fake_game(self, exe_name: str, output_dir: Path | None = None) -> Path | None:
+        """Create a placeholder in the selected output directory."""
         try:
+            target_path = self.game_path(exe_name, output_dir)
             loading_animation(f"Creating {exe_name.split('/')[-1]}", 0.8)
             self.copy_exe_to(target_path)
             print_color(f"[OK] Created: {target_path}", Colors.GREEN, bold=True)
@@ -379,16 +389,23 @@ def manual_mode(faker: GameFaker) -> None:
     if not exe_name or exe_name.lower() in ('back', 'b'):
         return
 
+    raw_dir = input("Output folder (blank for Desktop default): ").strip().strip('"')
+    output_dir = Path(raw_dir).expanduser() if raw_dir else None
+    try:
+        target = faker.game_path(exe_name, output_dir)
+    except ValueError as e:
+        print_color(f"[ERROR] {e}", Colors.RED)
+        return
     print(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
     print(f"  Executable: {Colors.CYAN}{exe_name}{Colors.RESET}")
-    print(f"  Path: {Colors.GRAY}{faker.desktop_path / config.FAKE_EXE_DIR / exe_name}{Colors.RESET}")
+    print(f"  Path: {Colors.GRAY}{target}{Colors.RESET}")
 
     if not ask_confirm():
         print_color("\n[!] Operation cancelled", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return
 
-    result = faker.create_fake_game(exe_name)
+    result = faker.create_fake_game(exe_name, output_dir=output_dir)
     if result:
         print()
         faker.launch_executable(result)
