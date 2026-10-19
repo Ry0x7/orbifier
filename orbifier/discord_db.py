@@ -228,8 +228,19 @@ def database_mode(db: DiscordGamesDB, faker) -> None:
         print_color(f"[ERROR] {e}", Colors.RED)
         return
     print(f"  Path: {Colors.GRAY}{target}{Colors.RESET}")
+    if target.exists():
+        print_color("  [*] Existing executable found (will be overwritten if launched).", Colors.YELLOW)
 
-    if not ask_confirm():
+    choice = ask_confirm()
+    if choice == 'delete':
+        res = faker.delete_fake_game(exe_name, output_dir=output_dir)
+        if res.get("executable") and res["executable"][1]:
+            print_color(f"[OK] Deleted executable: {res['executable'][0]}", Colors.GREEN)
+        else:
+            print_color("[*] No existing executable found to delete.", Colors.YELLOW)
+        time.sleep(config.SLEEP_SHORT)
+        return
+    elif not choice:
         print_color("\n[!] Operation cancelled", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return

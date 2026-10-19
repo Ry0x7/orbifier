@@ -3,6 +3,7 @@ steam.py – Steam quest helpers: registry, API, appmanifest, and quest mode UI.
 """
 
 import re
+import shutil
 import sys
 import time
 from pathlib import Path, PureWindowsPath
@@ -217,7 +218,7 @@ def steamapps_path(steam_path: Path) -> Path:
 
 def generate_appmanifest(appid, name, installdir, steam_path, depot_id=None,
                          manifest_mode="legacy"):
-    """Write a new manifest; preserve any existing Steam installation."""
+    """Write an appmanifest; overwrites any existing manifest for this app ID."""
     if not str(appid).isascii() or not str(appid).isdigit() or int(appid) <= 0:
         raise ValueError("Steam App ID must be a positive integer.")
     if manifest_mode not in ("legacy", "installed"):
@@ -241,7 +242,9 @@ def generate_appmanifest(appid, name, installdir, steam_path, depot_id=None,
     acf_path = steamapps_path(steam_path) / f"appmanifest_{int(appid)}.acf"
     try:
         acf_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(acf_path, "x", encoding="utf-8") as f:
+        if acf_path.is_dir():
+            shutil.rmtree(acf_path)
+        with open(acf_path, "w", encoding="utf-8") as f:
             f.write(acf_content)
         print_color(f"[OK] Created appmanifest: {acf_path}", Colors.GREEN, bold=True)
         return acf_path
@@ -295,6 +298,83 @@ def create_steam_fake_exe(faker, fake_exe_path: Path, executable: str) -> bool:
     except Exception as e:
         print_color(f"[ERROR] Failed to copy exe: {e}", Colors.RED, bold=True)
         return False
+
+
+def delete_steam_game(steam_path: Path, appid: int, installdir: str, executable: str) -> dict:
+    """Delete fake executable, helper files, manifest, and empty install folder.
+
+    Returns a dict with paths and boolean statuses:
+    {
+        "manifest": (Path, bool),
+        "executable": (Path, bool),
+        "helpers": list[Path],
+        "folder": (Path, bool),
+    }
+    """
+    results = {
+        "manifest": (None, False),
+        "executable": (None, False),
+        "helpers": [],
+        "folder": (None, False),
+    }
+
+    # 1. Manifest
+    try:
+        acf_path = steamapps_path(steam_path) / f"appmanifest_{int(appid)}.acf"
+        if acf_path.exists():
+            if acf_path.is_dir():
+                shutil.rmtree(acf_path)
+            else:
+                acf_path.unlink()
+            results["manifest"] = (acf_path, True)
+        else:
+            results["manifest"] = (acf_path, False)
+    except Exception:
+        results["manifest"] = (None, False)
+
+    # 2. Executable & helper files
+    try:
+        fake_exe = steam_fake_exe_path(steam_path, installdir, executable)
+        if fake_exe.exists():
+            if fake_exe.is_dir():
+                shutil.rmtree(fake_exe)
+            else:
+                fake_exe.unlink()
+            results["executable"] = (fake_exe, True)
+        else:
+            results["executable"] = (fake_exe, False)
+
+        parent = fake_exe.parent
+        for helper_name in ("_orbifier_timer.pyw", "pyvenv.cfg"):
+            h = parent / helper_name
+            if h.exists() and h.is_file():
+                try:
+                    h.unlink()
+                    results["helpers"].append(h)
+                except Exception:
+                    pass
+
+        # 3. Clean up empty install dir and parent dirs up to steamapps/common
+        common_dir = steamapps_path(steam_path) / "common"
+        install_dir = common_dir / sanitize_installdir(installdir)
+        folder_deleted = False
+        curr = parent
+        while curr != common_dir and curr.parent != curr and curr.is_relative_to(common_dir):
+            try:
+                if not any(curr.iterdir()):
+                    curr.rmdir()
+                    if curr == install_dir:
+                        folder_deleted = True
+                    curr = curr.parent
+                else:
+                    break
+            except Exception:
+                break
+        results["folder"] = (install_dir, folder_deleted)
+    except Exception:
+        pass
+
+    return results
 
 
 # ── Interactive UI for Steam Quest Mode ───────────────────────────────────────
@@ -411,16 +491,35 @@ def steam_quest_mode(faker) -> None:
     except ValueError as e:
         print_color(f"[ERROR] {e}", Colors.RED)
         return
-    if fake_exe_path.exists():
-        print_color(f"[ERROR] Executable already exists: {fake_exe_path}", Colors.RED)
-        return
 
+    acf_path = steamapps_path(steam_path) / f'appmanifest_{appid}.acf'
     print(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-    print(f"  AppManifest: {Colors.GRAY}{steamapps_path(steam_path) / f'appmanifest_{appid}.acf'}{Colors.RESET}")
+    print(f"  AppManifest: {Colors.GRAY}{acf_path}{Colors.RESET}")
     print(f"  Fake exe:    {Colors.GRAY}{fake_exe_path}{Colors.RESET}")
     print(f"  Manifest:    {mode}")
+    if fake_exe_path.exists() or acf_path.exists():
+        print_color("  [*] Existing setup found (will be overwritten if launched).", Colors.YELLOW)
 
-    if not ask_confirm():
+    choice = ask_confirm()
+    if choice == 'delete':
+        res = delete_steam_game(steam_path, appid, info['installdir'], info['executable'])
+        deleted = False
+        if res.get("manifest") and res["manifest"][1]:
+            print_color(f"[OK] Deleted manifest: {res['manifest'][0]}", Colors.GREEN)
+            deleted = True
+        if res.get("executable") and res["executable"][1]:
+            print_color(f"[OK] Deleted executable: {res['executable'][0]}", Colors.GREEN)
+            deleted = True
+        if res.get("folder") and res["folder"][1]:
+            print_color(f"[OK] Cleaned up folder: {res['folder'][0]}", Colors.GREEN)
+            deleted = True
+        if not deleted:
+            print_color("[*] No existing files or folder found to delete.", Colors.YELLOW)
+        else:
+            print_color("[OK] Deletion complete.", Colors.GREEN, bold=True)
+        time.sleep(config.SLEEP_SHORT)
+        return
+    elif not choice:
         print_color("\n[!] Operation cancelled.", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return

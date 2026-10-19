@@ -89,9 +89,10 @@ install folder are rejected.
 
 **INSTALLED MANIFEST** is selected by default and writes the minimal `AppState` fields
 with `StateFlags "4"`. Uncheck it for the previous staged manifest (`StateFlags "1026"`).
-The CLI offers the same settings. Existing manifests and executables are preserved;
-if a previous placeholder setup remains, remove those known placeholder files or use
-another library before running the setup again.
+The CLI offers the same settings. If an executable, manifest, or install folder
+already exists from a previous setup, Orbifier overwrites it cleanly without error.
+You can also use the **DELETE** button (or 'd' option in the CLI) to remove the
+placeholder executable, helper files, manifest, and install folder.
 
 For the EA SPORTS FC 27 instructions:
 
@@ -116,7 +117,7 @@ Edit `settings.py` next to the app (source run) and restart.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `VERSION` | `"1.3.0"` | Version shown in the window and used by the update check. |
+| `VERSION` | `"1.4.0"` | Version shown in the window and used by the update check. |
 | `DEVELOPER` | `"Ry0x7"` | Name shown in the status bar. |
 | `GITHUB_REPO_OWNER` | `"Ry0x7"` | Owner of the repo the exe checks for updates. |
 | `GITHUB_REPO_NAME` | `"orbifier"` | Repo the exe checks for updates. |

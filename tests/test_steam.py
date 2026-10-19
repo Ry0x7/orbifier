@@ -164,12 +164,30 @@ class TestCustomSteamSetup:
         path = steam.generate_appmanifest(123, "Game", "Game", tmp_path)
         assert '"StateFlags"\t\t"1026"' in path.read_text()
 
-    def test_does_not_overwrite_existing_manifest(self, tmp_path):
+    def test_overwrites_existing_manifest(self, tmp_path):
         path = tmp_path / "steamapps/appmanifest_123.acf"
         path.parent.mkdir()
         path.write_text("existing installation")
-        assert steam.generate_appmanifest(123, "Game", "Game", tmp_path) is None
-        assert path.read_text() == "existing installation"
+        manifest = steam.generate_appmanifest(123, "Game", "Game", tmp_path)
+        assert manifest == path
+        assert '"appid"\t\t"123"' in path.read_text()
+        assert "existing installation" not in path.read_text()
+
+    def test_delete_steam_game(self, tmp_path):
+        manifest = steam.generate_appmanifest(123, "Game", "GameDir", tmp_path)
+        fake_exe = tmp_path / "steamapps/common/GameDir/game.exe"
+        fake_exe.parent.mkdir(parents=True, exist_ok=True)
+        fake_exe.write_bytes(b"placeholder")
+        helper = fake_exe.parent / "_orbifier_timer.pyw"
+        helper.write_text("timer")
+
+        res = steam.delete_steam_game(tmp_path, 123, "GameDir", "game.exe")
+        assert res["manifest"][1] is True
+        assert res["executable"][1] is True
+        assert not manifest.exists()
+        assert not fake_exe.exists()
+        assert not helper.exists()
+        assert not (tmp_path / "steamapps/common/GameDir").exists()
 
     def test_normalises_backslashes(self):
         launch = {

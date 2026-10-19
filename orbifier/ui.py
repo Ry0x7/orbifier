@@ -103,9 +103,12 @@ def loading_animation(text, duration=1.5):
     sys.stdout.flush()
 
 
-def ask_confirm(prompt="Create and launch?") -> bool:
-    """Ask a Y/n confirmation question. Returns True if user confirms."""
-    answer = input(f"\n{Colors.BOLD}{prompt}{Colors.RESET} [Y/n]: ").strip().lower()
+def ask_confirm(prompt="Create and launch?", allow_delete=True) -> bool | str:
+    """Ask a confirmation question. Returns True if confirmed, 'delete' if 'd', False otherwise."""
+    suffix = " [Y/n] (or 'd' to delete): " if allow_delete else " [Y/n]: "
+    answer = input(f"\n{Colors.BOLD}{prompt}{Colors.RESET}{suffix}").strip().lower()
+    if allow_delete and answer in ('d', 'delete'):
+        return 'delete'
     return answer in ('', 'y', 'yes')
 
 

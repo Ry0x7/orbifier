@@ -252,15 +252,18 @@ class GameFaker:
     def copy_exe_to(self, target_path: Path) -> None:
         """Copy the faker executable to *target_path*.
 
-        In source mode, also creates a ``_orbifier_timer.pyw`` next to
-        the target so the renamed Python interpreter can run it.
+        If the executable, timer script, or destination folder already exists,
+        it is overwritten cleanly instead of raising an error.
         """
         if target_path.exists():
-            raise FileExistsError(f"Executable already exists; choose another folder: {target_path}")
-        timer_script = target_path.parent / "_orbifier_timer.pyw"
-        if (not self._frozen and timer_script.exists()
-                and timer_script.read_text(encoding="utf-8", errors="replace") != _TIMER_PYW_CODE):
-            raise FileExistsError(f"Helper file already exists; choose another folder: {timer_script}")
+            if target_path.is_dir():
+                shutil.rmtree(target_path)
+            else:
+                try:
+                    target_path.unlink()
+                except Exception:
+                    pass
+
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self._source_exe, target_path)
 
@@ -281,14 +284,60 @@ class GameFaker:
                         pass
                     break
 
-            if not timer_script.exists():
-                timer_script.write_text(_TIMER_PYW_CODE, encoding="utf-8")
-                self.created_helpers.add(timer_script.resolve())
+            timer_script = target_path.parent / "_orbifier_timer.pyw"
+            timer_script.write_text(_TIMER_PYW_CODE, encoding="utf-8")
+            self.created_helpers.add(timer_script.resolve())
 
     def game_path(self, exe_name: str, output_dir: Path | None = None) -> Path:
         """Resolve the same validated destination used by previews and creation."""
         from .steam import executable_path
         return executable_path(output_dir or self.desktop_path / config.FAKE_EXE_DIR, exe_name)
+
+    def delete_fake_game(self, exe_name: str, output_dir: Path | None = None) -> dict:
+        """Delete fake game executable, helper files, and clean up empty parent folders."""
+        results = {
+            "executable": (None, False),
+            "helpers": [],
+            "folder": (None, False),
+        }
+        try:
+            target = self.game_path(exe_name, output_dir)
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                results["executable"] = (target, True)
+            else:
+                results["executable"] = (target, False)
+
+            parent = target.parent
+            for helper_name in ("_orbifier_timer.pyw", "pyvenv.cfg"):
+                h = parent / helper_name
+                if h.exists() and h.is_file():
+                    try:
+                        h.unlink()
+                        results["helpers"].append(h)
+                    except Exception:
+                        pass
+
+            desktop = Path(output_dir).expanduser().resolve() if output_dir else (self.desktop_path / config.FAKE_EXE_DIR).resolve()
+            folder_deleted = False
+            curr = parent
+            while curr != desktop and curr.parent != curr and (output_dir is not None or curr.is_relative_to(desktop)):
+                try:
+                    if not any(curr.iterdir()):
+                        curr.rmdir()
+                        folder_deleted = True
+                        curr = curr.parent
+                    else:
+                        break
+                except Exception:
+                    break
+            results["folder"] = (parent, folder_deleted)
+        except Exception:
+            pass
+        return results
 
     def create_fake_game(self, exe_name: str, output_dir: Path | None = None) -> Path | None:
         """Create a placeholder in the selected output directory."""
@@ -399,8 +448,19 @@ def manual_mode(faker: GameFaker) -> None:
     print(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
     print(f"  Executable: {Colors.CYAN}{exe_name}{Colors.RESET}")
     print(f"  Path: {Colors.GRAY}{target}{Colors.RESET}")
+    if target.exists():
+        print_color("  [*] Existing executable found (will be overwritten if launched).", Colors.YELLOW)
 
-    if not ask_confirm():
+    choice = ask_confirm()
+    if choice == 'delete':
+        res = faker.delete_fake_game(exe_name, output_dir=output_dir)
+        if res.get("executable") and res["executable"][1]:
+            print_color(f"[OK] Deleted executable: {res['executable'][0]}", Colors.GREEN)
+        else:
+            print_color("[*] No existing executable found to delete.", Colors.YELLOW)
+        time.sleep(config.SLEEP_SHORT)
+        return
+    elif not choice:
         print_color("\n[!] Operation cancelled", Colors.YELLOW)
         time.sleep(config.SLEEP_SHORT)
         return

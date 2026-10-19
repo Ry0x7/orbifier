@@ -731,7 +731,9 @@ class OrbifierApp:
         tk.Checkbutton(row2, text="AUTO", variable=self.db_autoclose, bg=BG, fg=TEXT,
                        selectcolor=PANEL_DARK, activebackground=BG, activeforeground=TEXT,
                        font=self.font_small).pack(side="left", padx=4)
-        PixelButton(row2, "LAUNCH", self.db_launch, width=120, height=38,
+        PixelButton(row2, "DELETE", self.db_delete, width=90, height=38,
+                    color=RED, scale=2).pack(side="right", padx=(4, 0))
+        PixelButton(row2, "LAUNCH", self.db_launch, width=110, height=38,
                     color=GREEN, scale=2).pack(side="right")
         self.db_info = tk.StringVar(value="Database not loaded")
         tk.Label(row2, textvariable=self.db_info, bg=BG, fg=MUTED,
@@ -835,6 +837,56 @@ class OrbifierApp:
             auto_close=auto_close,
         )
 
+    def db_delete(self):
+        if self._guard_busy():
+            return
+        sel = self.db_list.curselection()
+        if not sel:
+            self.log("[!] Search and select a game first", "warn")
+            return
+        game = self.db_results[sel[0]]
+        override = self.db_override.get().strip()
+        exe_name = override or self.db.get_win32_executable(game)
+        if not exe_name:
+            self.log("[ERROR] No Windows executable found for this game", "err")
+            return
+        output_dir = Path(self.output_directory.get())
+        try:
+            target = self.faker.game_path(exe_name, output_dir)
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
+
+        if not target.exists() and not (target.parent.exists() and target.parent != output_dir):
+            self.log(f"[!] No existing executable found at {target} to delete.", "warn")
+            return
+
+        if not messagebox.askyesno(
+            "Orbifier - Delete Game Setup",
+            f"Game: {game.get('name')}\nExecutable: {exe_name}\nPath: {target}\n\n"
+            "Proceed with delete?",
+            parent=self.root,
+        ):
+            self.log("[!] Delete cancelled", "warn")
+            return
+
+        def work():
+            for q in list(self.quests.quests):
+                if q.exe_path and Path(q.exe_path).resolve() == target.resolve():
+                    self.quests.stop(q)
+            return self.faker.delete_fake_game(exe_name, output_dir=output_dir)
+
+        def done(res):
+            if res.get("executable") and res["executable"][1]:
+                self.log(f"[OK] Deleted executable: {res['executable'][0].name}", "ok")
+                if res.get("folder") and res["folder"][1]:
+                    self.log(f"[OK] Cleaned up folder: {res['folder'][0].name}", "ok")
+                self.log(f"[OK] Deletion complete for {game.get('name')}.", "ok")
+            else:
+                self.log("[*] No executable found to delete.", "info")
+
+        self.run_task(f"Deleting {exe_name}", work, done)
+
     # ── Manual ────────────────────────────────────────────────────────────────
     def _build_manual(self) -> tk.Frame:
         frame = self._screen("MANUAL EXE")
@@ -858,8 +910,10 @@ class OrbifierApp:
         tk.Checkbutton(row, text="AUTO-CLOSE", variable=self.manual_autoclose, bg=BG, fg=TEXT,
                        selectcolor=PANEL_DARK, activebackground=BG, activeforeground=TEXT,
                        font=self.font_small).pack(side="left", padx=4)
-        PixelButton(row, "LAUNCH", self.manual_launch, width=130, height=38,
-                    color=GREEN, scale=2).pack(side="left", padx=8)
+        PixelButton(row, "DELETE", self.manual_delete, width=90, height=38,
+                    color=RED, scale=2).pack(side="left", padx=4)
+        PixelButton(row, "LAUNCH", self.manual_launch, width=120, height=38,
+                    color=GREEN, scale=2).pack(side="left", padx=4)
         return frame
 
     def _on_show_manual(self):
@@ -900,6 +954,49 @@ class OrbifierApp:
             minutes=mins,
             auto_close=auto_close,
         )
+
+    def manual_delete(self):
+        if self._guard_busy():
+            return
+        exe_name = self.manual_exe.get().strip()
+        if not exe_name:
+            self.log("[!] Type an executable name first", "warn")
+            return
+        output_dir = Path(self.output_directory.get())
+        try:
+            target = self.faker.game_path(exe_name, output_dir)
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
+
+        if not target.exists() and not (target.parent.exists() and target.parent != output_dir):
+            self.log(f"[!] No existing executable found at {target} to delete.", "warn")
+            return
+
+        if not messagebox.askyesno(
+            "Orbifier - Delete Game Setup",
+            f"Executable: {exe_name}\nPath: {target}\n\nProceed with delete?",
+            parent=self.root,
+        ):
+            self.log("[!] Delete cancelled", "warn")
+            return
+
+        def work():
+            for q in list(self.quests.quests):
+                if q.exe_path and Path(q.exe_path).resolve() == target.resolve():
+                    self.quests.stop(q)
+            return self.faker.delete_fake_game(exe_name, output_dir=output_dir)
+
+        def done(res):
+            if res.get("executable") and res["executable"][1]:
+                self.log(f"[OK] Deleted executable: {res['executable'][0].name}", "ok")
+                if res.get("folder") and res["folder"][1]:
+                    self.log(f"[OK] Cleaned up folder: {res['folder'][0].name}", "ok")
+                self.log(f"[OK] Deletion complete.", "ok")
+            else:
+                self.log("[*] No executable found to delete.", "info")
+
+        self.run_task(f"Deleting {exe_name}", work, done)
 
     def _create_and_launch(
         self,
@@ -1004,7 +1101,9 @@ class OrbifierApp:
         tk.Checkbutton(row3, text="AUTO-CLOSE", variable=self.steam_autoclose, bg=BG, fg=TEXT,
                        selectcolor=PANEL_DARK, activebackground=BG, activeforeground=TEXT,
                        font=self.font_small).pack(side="left", padx=4)
-        PixelButton(row3, "CREATE & LAUNCH", self.steam_create, width=220, height=38,
+        PixelButton(row3, "DELETE", self.steam_delete, width=90, height=38,
+                    color=RED, scale=2).pack(side="right", padx=(4, 0))
+        PixelButton(row3, "CREATE & LAUNCH", self.steam_create, width=180, height=38,
                     color=GREEN, scale=2).pack(side="right")
         return frame
 
@@ -1094,11 +1193,9 @@ class OrbifierApp:
             self.log(str(e), "err")
             return
         acf_path = steam.steamapps_path(steam_path) / f"appmanifest_{appid}.acf"
-        if acf_path.exists() or fake_exe_path.exists():
-            self.log("[!] Manifest or executable already exists. Choose an unused library/folder or remove an earlier placeholder setup.", "err")
-            return
         manifest_mode = "installed" if self.steam_installed.get() else "legacy"
         warn = "" if steam_path.exists() else "\n\nWARNING: Steam path does not exist!"
+        overwrite_note = "\n\n(Existing manifest or executable will be overwritten)" if (acf_path.exists() or fake_exe_path.exists()) else ""
 
         try:
             mins = float(self.steam_minutes.get().strip())
@@ -1114,7 +1211,7 @@ class OrbifierApp:
             f"Executable: {info['executable']}\n\nAppManifest: {acf_path}\n"
             f"Manifest mode: {manifest_mode}\n"
             f"Fake exe: {fake_exe_path}\n"
-            f"Timer: {mins:g} minutes  ·  Auto-close: {'Yes' if auto_close else 'No'}{warn}\n\n"
+            f"Timer: {mins:g} minutes  ·  Auto-close: {'Yes' if auto_close else 'No'}{warn}{overwrite_note}\n\n"
             "Use at your own risk.\nCreate and launch?",
             parent=self.root,
         ):
@@ -1150,6 +1247,87 @@ class OrbifierApp:
                 self.log("[*] Keep the process running or in tray until the quest is done.", "info")
 
         self.run_task("Writing appmanifest + exe", work, done)
+
+    def steam_delete(self):
+        if self._guard_busy():
+            return
+        raw_path = self.steam_path.get().strip()
+        sel = self.steam_list.curselection()
+        if not raw_path:
+            self.log("[!] No Steam path provided.", "err")
+            return
+        if not sel:
+            self.log("[!] Search and select a game first", "warn")
+            return
+        steam_path = Path(raw_path)
+        game = self.steam_results[sel[0]]
+        appid = int(game["id"])
+        override = self.steam_override.get().strip()
+        install_override = self.steam_install.get().strip()
+
+        name = game["name"]
+        installdir = install_override or name
+        executable = override or "Game.exe"
+        if appid == 4080220:
+            name = "EA SPORTS FC™ 27"
+            if not install_override:
+                installdir = "EA SPORTS FC 27"
+            if not override:
+                executable = "fc27.exe"
+
+        installdir = steam.sanitize_installdir(installdir)
+        try:
+            fake_exe_path = steam.steam_fake_exe_path(steam_path, installdir, executable)
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
+        acf_path = steam.steamapps_path(steam_path) / f"appmanifest_{appid}.acf"
+        install_dir = steam.steamapps_path(steam_path) / "common" / installdir
+
+        acf_exists = acf_path.exists()
+        exe_exists = fake_exe_path.exists()
+        folder_exists = install_dir.exists()
+
+        if not (acf_exists or exe_exists or folder_exists):
+            self.log(f"[!] No existing setup found for {name} (AppID: {appid}) to delete.", "warn")
+            return
+
+        msg = (
+            f"Delete existing setup for {name} (AppID: {appid})?\n\n"
+            f"Manifest: {acf_path} ({'found' if acf_exists else 'not found'})\n"
+            f"Executable: {fake_exe_path} ({'found' if exe_exists else 'not found'})\n"
+            f"Folder: {install_dir} ({'found' if folder_exists else 'not found'})\n\n"
+            "This will delete the placeholder files and manifest.\n"
+            "Proceed with delete?"
+        )
+        if not messagebox.askyesno("Orbifier - Delete Steam Quest Setup", msg, parent=self.root):
+            self.log("[!] Delete cancelled.", "warn")
+            return
+
+        def work():
+            # Stop any running quest for this exe first
+            for q in list(self.quests.quests):
+                if q.exe_path and Path(q.exe_path).resolve() == fake_exe_path.resolve():
+                    self.quests.stop(q)
+            return steam.delete_steam_game(steam_path, appid, installdir, executable)
+
+        def done(res):
+            deleted_any = False
+            if res.get("manifest") and res["manifest"][1]:
+                self.log(f"[OK] Deleted manifest: {res['manifest'][0].name}", "ok")
+                deleted_any = True
+            if res.get("executable") and res["executable"][1]:
+                self.log(f"[OK] Deleted executable: {res['executable'][0].name}", "ok")
+                deleted_any = True
+            if res.get("folder") and res["folder"][1]:
+                self.log(f"[OK] Cleaned up folder: {res['folder'][0].name}", "ok")
+                deleted_any = True
+            if deleted_any:
+                self.log(f"[OK] Deletion complete for {name} (AppID: {appid}).", "ok")
+            else:
+                self.log(f"[*] No files were deleted.", "info")
+
+        self.run_task(f"Deleting {name}", work, done)
 
     # ── Active quests ─────────────────────────────────────────────────────────
     def _build_active(self) -> tk.Frame:
