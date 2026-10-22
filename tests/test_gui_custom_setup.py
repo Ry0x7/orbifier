@@ -1,26 +1,12 @@
 """Exercise the real Tk controls without networking or launching placeholders."""
-import tkinter as tk
-import os
-
 import pytest
 
-from orbifier import gui, ui
+from orbifier import gui
 
 
 @pytest.fixture(scope="module")
-def app():
-    monkeypatch = pytest.MonkeyPatch()
-    if os.name != "nt" and not os.environ.get("DISPLAY"):
-        pytest.skip("Tk integration tests require a desktop display or Xvfb.")
-    root = tk.Tk()
-    root.withdraw()
-    monkeypatch.setattr(gui, "is_process_elevated", lambda: False)
-    monkeypatch.setattr(gui.OrbifierApp, "run_task", lambda *a, **kw: None)
-    instance = gui.OrbifierApp(root, check_updates=False)
-    yield instance
-    ui.set_output_hook(None)
-    root.destroy()
-    monkeypatch.undo()
+def app(gui_app):
+    return gui_app
 
 
 def test_changed_screens_fit_existing_window(app):

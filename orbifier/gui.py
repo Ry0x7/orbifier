@@ -26,6 +26,7 @@ from .ui import Colors
 from .errors import OrbifierError
 from .discord_db import DiscordGamesDB
 from .faker import GameFaker, is_process_elevated, ELEVATED_WARNING
+from .quest_board import QuestBoard, load_quest_board
 from .quests import QuestTracker, format_mmss, RUNNING, DONE, STOPPED
 from .updater import auto_update
 
@@ -204,13 +205,23 @@ class PixelButton(tk.Canvas):
         self.text, self.command, self.color, self.scale = text, command, color, scale
         self._bw, self._bh = width, height
         self._hover = self._pressed = False
+        self.enabled = True
         self._draw()
         self.bind("<Enter>", lambda _e: self._set(hover=True))
         self.bind("<Leave>", lambda _e: self._set(hover=False, pressed=False))
         self.bind("<ButtonPress-1>", lambda _e: self._set(pressed=True))
         self.bind("<ButtonRelease-1>", self._on_release)
 
+    def set_enabled(self, enabled: bool) -> None:
+        """Enable or disable clicks and draw the disabled (muted) state."""
+        self.enabled = bool(enabled)
+        self._hover = self._pressed = False
+        self.configure(cursor="hand2" if self.enabled else "arrow")
+        self._draw()
+
     def _set(self, hover=None, pressed=None):
+        if not self.enabled:
+            return
         if hover is not None:
             self._hover = hover
         if pressed is not None:
@@ -218,6 +229,8 @@ class PixelButton(tk.Canvas):
         self._draw()
 
     def _on_release(self, event):
+        if not self.enabled:
+            return
         was_pressed = self._pressed
         self._set(pressed=False)
         inside = 0 <= event.x < self._bw and 0 <= event.y < self._bh
@@ -226,19 +239,20 @@ class PixelButton(tk.Canvas):
 
     def invoke(self):
         """Programmatic click (used by tests / keyboard shortcuts)."""
-        if self.command:
+        if self.enabled and self.command:
             self.command()
 
     def _draw(self):
         self.delete("all")
         w, h, s = self._bw, self._bh, BTN_SHADOW
         off = s if self._pressed else 0
+        color = self.color if self.enabled else MUTED
         if not self._pressed:
             self.create_rectangle(s, s, w, h, fill=SHADOW, width=0)
         x0, y0, x1, y1 = off, off, w - s + off, h - s + off
-        face = self.color if self._hover else PANEL
-        ink = BG if self._hover else self.color
-        self.create_rectangle(x0, y0, x1, y1, fill=self.color, width=0)
+        face = color if (self._hover and self.enabled) else PANEL
+        ink = BG if (self._hover and self.enabled) else color
+        self.create_rectangle(x0, y0, x1, y1, fill=color, width=0)
         self.create_rectangle(x0 + PX, y0 + PX, x1 - PX, y1 - PX, fill=face, width=0)
         # notch the corners so the outline reads as pixel art, not a box
         for cx, cy in ((x0, y0), (x1 - PX, y0), (x0, y1 - PX), (x1 - PX, y1 - PX)):
@@ -407,6 +421,11 @@ class OrbifierApp:
         self.steam_results: list = []
         self.output_directory = tk.StringVar(value=str(self.faker.desktop_path / config.FAKE_EXE_DIR))
 
+        self.quest_board_data: QuestBoard | None = None
+        self.quest_board_loading = False
+        self.quest_board_fetched_at = 0.0
+        self.quest_board_results: list = []
+
         self.quests = QuestTracker(config.QUEST_MINUTES * 60)
         self.quest_panels: list = []
 
@@ -414,6 +433,7 @@ class OrbifierApp:
         self.screens = {
             "home":     self._build_home(),
             "database": self._build_database(),
+            "quests":   self._build_quests(),
             "manual":   self._build_manual(),
             "steam":    self._build_steam(),
             "credits":  self._build_credits(),
@@ -688,15 +708,17 @@ class OrbifierApp:
         grid.pack(side="top", pady=(8, 0))
         buttons = [
             ("DATABASE QUEST", "database", CYAN),
+            ("QUEST BOARD", "quests", MAGENTA),
             ("MANUAL EXE", "manual", GREEN),
             ("STEAM QUEST", "steam", MAGENTA),
+            ("ACTIVE QUESTS", "active", GREEN),
             ("CREDITS", "credits", YELLOW),
         ]
         self.home_buttons = {}
         for i, (text, target, color) in enumerate(buttons):
             btn = PixelButton(grid, text, lambda t=target: self.show(t),
-                              width=350, height=56, color=color, scale=3)
-            btn.grid(row=i // 2, column=i % 2, padx=10, pady=6)
+                              width=240, height=48, color=color, scale=2)
+            btn.grid(row=i // 3, column=i % 3, padx=6, pady=4)
             self.home_buttons[target] = btn
 
         self.home_quests = QuestPanel(frame, self, max_rows=2, view_all=True)
@@ -755,10 +777,14 @@ class OrbifierApp:
             self.db_loading = False
             self.db_info.set(f"{db.source} ({len(db.games)} games)")
             self.log("[*] Search by name or abbreviation (PUBG, Fortnite, Valorant...)", "info")
+            if self.current == "quests":
+                self._quest_selection_changed()
 
         def failed():
             self.db_loading = False
             self.db_info.set("Load failed - search to retry")
+            if self.current == "quests":
+                self._quest_selection_changed()
 
         self.run_task("Loading games database", DiscordGamesDB, done, failed)
 
@@ -886,6 +912,313 @@ class OrbifierApp:
                 self.log("[*] No executable found to delete.", "info")
 
         self.run_task(f"Deleting {exe_name}", work, done)
+
+    # ── Quest Board ───────────────────────────────────────────────────────────
+    def _build_quests(self) -> tk.Frame:
+        frame = self._screen("QUEST BOARD")
+
+        row = self._row(frame, pady=2)
+        self._label(row, "REGION").pack(side="left")
+        self.quest_region_var = tk.StringVar(value="ALL")
+        self.quest_region_menu = tk.OptionMenu(
+            row, self.quest_region_var, "ALL", "GLOBAL",
+            command=lambda _value: self._refresh_quest_list(),
+        )
+        self.quest_region_menu.configure(
+            bg=PANEL_DARK, fg=TEXT, activebackground=PANEL, activeforeground=CYAN,
+            font=self.font, relief="flat", bd=0, highlightthickness=PX,
+            highlightbackground=BORDER, width=10, anchor="w",
+        )
+        self.quest_region_menu["menu"].configure(
+            bg=PANEL_DARK, fg=TEXT, activebackground=MAGENTA,
+            activeforeground=BG, font=self.font,
+        )
+        self.quest_region_menu.pack(side="left", padx=(8, 12), ipady=2)
+
+        self.quest_desktop_only = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            row, text="DESKTOP ONLY", variable=self.quest_desktop_only,
+            command=self._refresh_quest_list, bg=BG, fg=TEXT,
+            selectcolor=PANEL_DARK, activebackground=BG, activeforeground=TEXT,
+            font=self.font_small,
+        ).pack(side="left")
+
+        PixelButton(row, "REFRESH", self.quest_refresh, width=110, height=32,
+                    color=CYAN, scale=2).pack(side="right")
+        self.quest_status_var = tk.StringVar(value="Quest board not loaded")
+        tk.Label(row, textvariable=self.quest_status_var, bg=BG, fg=MUTED,
+                 font=self.font_small).pack(side="right", padx=8)
+
+        self.quest_list = self._listbox(frame, height=6)
+        self.quest_list.pack(side="top", fill="x", padx=12, pady=4)
+        self.quest_list.bind("<<ListboxSelect>>", self._quest_selection_changed)
+
+        self.quest_detail_var = tk.StringVar(value="Open the board to load active quests.")
+        tk.Label(
+            frame, textvariable=self.quest_detail_var, bg=BG, fg=TEXT,
+            font=self.font_small, anchor="w", justify="left",
+            wraplength=WIN_W - 48,
+        ).pack(side="top", fill="x", padx=12, pady=(2, 4))
+
+        actions = self._row(frame, pady=2)
+        self.quest_launch_btn = PixelButton(
+            actions, "LAUNCH", self.quest_launch, width=130, height=36,
+            color=GREEN, scale=2,
+        )
+        self.quest_launch_btn.pack(side="right", padx=(4, 0))
+        self.quest_launch_btn.set_enabled(False)
+        self.quest_find_btn = PixelButton(
+            actions, "FIND GAME", self.quest_find_game, width=140, height=36,
+            color=CYAN, scale=2,
+        )
+        self.quest_find_btn.pack(side="right", padx=4)
+        self.quest_find_btn.set_enabled(False)
+        self._label(
+            actions,
+            "DATA: DISCORDQUEST.COM (UNOFFICIAL)",
+            MUTED,
+        ).pack(side="left")
+        return frame
+
+    def _on_show_quests(self):
+        self.ensure_db_loaded()
+        self.ensure_quests_loaded()
+        self.quest_list.focus_set()
+
+    def ensure_quests_loaded(self, force: bool = False):
+        """Load the board in the background, reusing the session cache."""
+        if self.quest_board_loading:
+            return
+        fresh = (
+            self.quest_board_data is not None
+            and time.monotonic() - self.quest_board_fetched_at < config.QUEST_CACHE_SECONDS
+        )
+        if fresh and not force:
+            self._refresh_quest_list()
+            return
+
+        self.quest_board_loading = True
+        self.quest_status_var.set("Loading quests...")
+        self.quest_launch_btn.set_enabled(False)
+        self.quest_find_btn.set_enabled(False)
+
+        def done(board):
+            self.quest_board_loading = False
+            self.quest_board_data = board
+            self.quest_board_fetched_at = time.monotonic()
+            self._rebuild_quest_region_menu(board)
+            self._refresh_quest_list()
+            skipped = board.skipped
+            suffix = ""
+            if skipped:
+                suffix = f" - skipped {skipped} malformed entr{'y' if skipped == 1 else 'ies'}"
+            self.log(
+                f"[OK] Loaded {len(board.quests)} active quest(s) "
+                f"from {len(board.regions)} region code(s){suffix}",
+                "ok",
+            )
+            self.log("[*] Region data is informational; Discord decides final eligibility.", "info")
+
+        def failed():
+            self.quest_board_loading = False
+            if self.quest_board_data is None:
+                self.quest_list.delete(0, "end")
+                self.quest_detail_var.set(
+                    "Quest data unavailable. Check your connection and press REFRESH."
+                )
+            self.quest_status_var.set("Could not load quests - press REFRESH to retry")
+            self._quest_selection_changed()
+
+        self.run_task("Loading quest board", load_quest_board, done, failed)
+
+    def quest_refresh(self):
+        self.ensure_quests_loaded(force=True)
+
+    def _rebuild_quest_region_menu(self, board: QuestBoard):
+        menu = self.quest_region_menu["menu"]
+        menu.delete(0, "end")
+        values = ["ALL", "GLOBAL", *board.regions]
+        if self.quest_region_var.get() not in values:
+            self.quest_region_var.set("ALL")
+        for value in values:
+            menu.add_command(
+                label=value,
+                command=lambda v=value: self._set_quest_region(v),
+            )
+
+    def _set_quest_region(self, value: str):
+        self.quest_region_var.set(value)
+        self._refresh_quest_list()
+
+    def _refresh_quest_list(self):
+        board = self.quest_board_data
+        if board is None:
+            self.quest_board_results = []
+            self.quest_list.delete(0, "end")
+            self._quest_selection_changed()
+            return
+
+        region = self.quest_region_var.get()
+        desktop_only = bool(self.quest_desktop_only.get())
+        results = board.filter(region=region, desktop_only=desktop_only)
+        self.quest_board_results = results
+
+        self.quest_list.delete(0, "end")
+        for quest in results:
+            self.quest_list.insert("end", self._quest_row_text(quest))
+        if results:
+            self.quest_list.selection_set(0)
+            self.quest_list.activate(0)
+        self._quest_selection_changed()
+
+        hidden = len(board.filter(region=region, desktop_only=False)) - len(results)
+        status = f"{len(results)} quest{'s' if len(results) != 1 else ''}"
+        if desktop_only and hidden:
+            status += f" - {hidden} other hidden"
+        try:
+            status += f" - updated {board.fetched_at.astimezone():%H:%M}"
+        except Exception:
+            pass
+        self.quest_status_var.set(status)
+
+    def _quest_selection_changed(self, _event=None):
+        quest = self._selected_quest()
+        if quest is None:
+            message = (
+                "No quests match this filter."
+                if self.quest_board_data is not None
+                else "Open the board to load active quests."
+            )
+            self.quest_detail_var.set(message)
+            self.quest_launch_btn.set_enabled(False)
+            self.quest_find_btn.set_enabled(False)
+            return
+
+        self.quest_detail_var.set(self._quest_detail_text(quest))
+        self.quest_find_btn.set_enabled(True)
+        self.quest_launch_btn.set_enabled(self._can_launch_quest(quest))
+
+    def _selected_quest(self):
+        sel = self.quest_list.curselection()
+        if not sel or not 0 <= sel[0] < len(self.quest_board_results):
+            return None
+        return self.quest_board_results[sel[0]]
+
+    def _can_launch_quest(self, quest) -> bool:
+        if not quest.supported or self.db is None:
+            return False
+        game = self.db.get_game_by_app_id(quest.app_id)
+        return bool(game and self.db.get_win32_executable(game))
+
+    def _quest_detail_text(self, quest) -> str:
+        if self.db is None:
+            exe_line = "Loading game database..." if self.db_loading else "Game database not loaded"
+        else:
+            game = self.db.get_game_by_app_id(quest.app_id)
+            if game is None:
+                exe_line = "Not found in Discord's detectable database - use FIND GAME"
+            else:
+                exe = self.db.get_win32_executable(game)
+                if exe:
+                    candidates = len(self.db._filter_win32_exes(game, skip_patterns=True))
+                    more = f"  (+{candidates - 1} more; Database screen can override)" if candidates > 1 else ""
+                    exe_line = exe + more
+                else:
+                    exe_line = "No Windows executable - try STEAM QUEST or FIND GAME"
+
+        tasks = ", ".join(sorted(quest.tasks)) or "UNKNOWN"
+        support = "supported" if quest.supported else "not supported by Orbifier"
+        variants = f"  -  {quest.variant_count} regional variants" if quest.variant_count > 1 else ""
+        age = "  -  18+" if quest.age_gate else ""
+        return (
+            f"{quest.name}{variants}\n"
+            f"Game: {quest.app_name}  -  app id {quest.app_id}\n"
+            f"Reward: {quest.reward or 'Unknown'}  -  Task: {tasks} ({support}){age}\n"
+            f"Region: {quest.availability.label()}  -  Ends: {quest.expires_label()}\n"
+            f"Executable: {exe_line}\n"
+            "Region data: discordquest.com (unofficial) - Discord decides eligibility."
+        )
+
+    @staticmethod
+    def _quest_row_text(quest) -> str:
+        name = quest.name.upper()
+        if len(name) > 30:
+            name = name[:29] + "~"
+        app = quest.app_name.upper()
+        if len(app) > 22:
+            app = app[:21] + "~"
+        marker = "" if quest.supported else "  -  OTHER"
+        return (
+            f"{name}  -  {app}  -  {quest.availability.label()}"
+            f"  -  ENDS {quest.expires_label()}{marker}"
+        )
+
+    def quest_launch(self):
+        if self._guard_busy():
+            return
+        quest = self._selected_quest()
+        if quest is None:
+            self.log("[!] Select a quest first", "warn")
+            return
+        if not quest.supported:
+            self.log("[!] Orbifier can only launch PLAY_ON_DESKTOP quests", "warn")
+            self.log("[*] Uncheck DESKTOP ONLY to inspect other quests, but they need Discord itself.", "info")
+            return
+        if self.db is None:
+            self.log("[!] Game database is still loading - try again in a moment", "warn")
+            return
+
+        game = self.db.get_game_by_app_id(quest.app_id)
+        if game is None:
+            self.log(f"[ERROR] App id {quest.app_id} is not in Discord's detectable database", "err")
+            self.log("[*] Use FIND GAME to search by name, then use the Database screen.", "info")
+            return
+        exe_name = self.db.get_win32_executable(game)
+        if not exe_name:
+            self.log(f"[ERROR] No Windows executable found for {game.get('name')}", "err")
+            self.log("[*] If this is a Steam quest, use the STEAM QUEST screen.", "warn")
+            return
+
+        output_dir = Path(self.output_directory.get())
+        try:
+            target = self.faker.game_path(exe_name, output_dir)
+        except ValueError as e:
+            self.log(str(e), "err")
+            return
+
+        minutes = float(config.QUEST_MINUTES)
+        auto_close = bool(config.AUTO_CLOSE)
+        region = quest.availability.label()
+        if not messagebox.askyesno(
+            "Orbifier - Quest Board",
+            f"Quest: {quest.name}\nGame: {game.get('name')}\n"
+            f"Discord app id: {quest.app_id}\nRegion: {region}\n\n"
+            f"Executable: {exe_name}\nPath: {target}\n"
+            f"Timer: {minutes:g} minutes  -  Auto-close: {'Yes' if auto_close else 'No'}\n\n"
+            "Region availability is informational - Discord decides final eligibility.\n"
+            "Orbifier cannot bypass region locks.\n\n"
+            "Use at your own risk.\nCreate and launch?",
+            parent=self.root,
+        ):
+            self.log("[!] Operation cancelled", "warn")
+            return
+
+        self._create_and_launch(
+            exe_name,
+            f"[OK] Quest Board setup complete for {quest.name}!",
+            minutes=minutes,
+            auto_close=auto_close,
+        )
+
+    def quest_find_game(self):
+        quest = self._selected_quest()
+        if quest is None:
+            self.log("[!] Select a quest first", "warn")
+            return
+        self.db_query.delete(0, "end")
+        self.db_query.insert(0, quest.app_name)
+        self.show("database")
+        self.log(f"[*] Find the entry with app id {quest.app_id} for {quest.app_name}.", "info")
 
     # ── Manual ────────────────────────────────────────────────────────────────
     def _build_manual(self) -> tk.Frame:
