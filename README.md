@@ -14,7 +14,7 @@
 > Orbifier exists to demonstrate how process-name based game detection works. Faking game activity can violate Discord's Terms of Service and individual quest rules, and may get rewards withheld or your account actioned. Steam mode writes files into your real Steam library. The author takes no responsibility for any consequences. See [Legal](#legal).
 
 > [!NOTE]
-> **Attribution & Original Source:** Orbifier is directly based on and forked from **[orbshacker](https://github.com/strykey/orbshacker)** created by **[Strykey](https://github.com/strykey)**. All credit for the original game-spoofing technique, research into Discord's detectable game registry, and initial design goes to Strykey. Orbifier extends the original concept under GPL-3.0 with a retro pixel-art interface, multi-quest tracking, Steam integration, synchronized keep-alive timer windows with system tray support, and automatic workspace clean up.
+> **Attribution & Original Source:** Orbifier is directly based on and forked from **[orbshacker](https://github.com/strykey/orbshacker)** created by **[Strykey](https://github.com/strykey)**. All credit for the original game-spoofing technique, research into Discord's detectable game registry, and initial design goes to Strykey. Orbifier extends the original concept under GPL-3.0 with a retro pixel-art interface, a regional Quest Board, multi-quest tracking, Steam integration, synchronized keep-alive timer windows with system tray support, and automatic workspace clean up.
 
 ## What it is
 
@@ -32,6 +32,7 @@ It is an **educational project** based on Strykey's [orbshacker](https://github.
 
 The **Quest Board** screen is reachable from the **QUEST BOARD** button on the home grid;
 it lists active quests across regions and can launch supported desktop quests.
+Screenshots may predate this addition; the home grid now has six buttons.
 
 ## Get it
 
