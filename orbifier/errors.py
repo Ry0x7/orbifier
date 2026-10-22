@@ -19,3 +19,7 @@ class SteamNotFoundError(OrbifierError):
 
 class DatabaseLoadError(OrbifierError):
     """Failed to load the games database from any source."""
+
+
+class QuestBoardError(OrbifierError):
+    """Quest board data could not be loaded or parsed."""

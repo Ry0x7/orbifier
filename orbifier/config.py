@@ -36,17 +36,21 @@ REPO_URL          = f"https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
 KOFI_URL = "https://ko-fi.com/ry0x7"
 
 # ── Network endpoints (internal – not in settings.py) ─────────────────────────
-DISCORD_API_URL        = "https://discord.com/api/v9/applications/detectable"
-GITHUB_BACKUP_URL      = (
+DISCORD_API_URL           = "https://discord.com/api/v9/applications/detectable"
+DISCORD_QUEST_API_URL     = "https://api.discordquest.com/api/quests"
+DISCORD_QUEST_REGIONS_URL = "https://api.discordquest.com/api/regions"
+GITHUB_BACKUP_URL         = (
     "https://gist.githubusercontent.com/Cynosphere/"
     "c1e77f77f0e565ddaac2822977961e76/raw/gameslist.json"
 )
-STEAMCMD_API_URL       = "https://api.steamcmd.net/v1/info"
-STEAM_STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch"
+STEAMCMD_API_URL          = "https://api.steamcmd.net/v1/info"
+STEAM_STORE_SEARCH_URL    = "https://store.steampowered.com/api/storesearch"
 
 # ── HTTP settings (internal) ─────────────────────────────────────────────────
 REQUEST_TIMEOUT      = 10
 REQUEST_TIMEOUT_LONG = 20
+QUEST_API_TIMEOUT    = 20
+QUEST_CACHE_SECONDS  = 300
 
 DISCORD_HEADERS = {
     "User-Agent": (
