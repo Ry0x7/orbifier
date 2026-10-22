@@ -168,3 +168,15 @@ class TestSearchRanking:
         results = db.search_games("call of duty")
         assert len(results) == 5
         assert results[0]["id"] == "1539812812854132867"
+
+
+class TestGetGameByAppId:
+    def test_accepts_string_and_int(self):
+        db = _make_db_with_games(SAMPLE_GAMES)
+        assert db.get_game_by_app_id("1")["name"] == "Minecraft"
+        assert db.get_game_by_app_id(2)["name"] == "Minecraft Dungeons"
+
+    def test_returns_none_for_unknown_or_missing(self):
+        db = _make_db_with_games(SAMPLE_GAMES)
+        assert db.get_game_by_app_id("999") is None
+        assert db.get_game_by_app_id(None) is None

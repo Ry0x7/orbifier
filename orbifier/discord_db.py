@@ -126,6 +126,16 @@ class DiscordGamesDB:
     def get_all_executables(self, game: dict) -> list:
         return self._filter_win32_exes(game, skip_patterns=False)
 
+    def get_game_by_app_id(self, app_id) -> dict | None:
+        """Return the game whose Discord application id matches *app_id*."""
+        if app_id is None:
+            return None
+        key = str(app_id)
+        for game in self.games:
+            if str(game.get("id")) == key:
+                return game
+        return None
+
 
 # ── Interactive UI ────────────────────────────────────────────────────────────
 
