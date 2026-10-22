@@ -94,11 +94,20 @@ def load_board(app, board):
 
 
 def test_quest_board_screen_fits_window(app):
+    long_name = "A Very Long Quest Name That Still Has To Wrap Correctly " * 2
+    load_board(
+        app,
+        QuestBoard(
+            quests=(make_quest("long", long_name, "111", is_global=True),),
+            regions=tuple(sorted(KNOWN)),
+            fetched_at=NOW,
+        ),
+    )
     app.show("quests")
     app.root.update_idletasks()
     screen = app.screens["quests"]
-    assert screen.winfo_reqwidth() <= gui.WIN_W
-    assert screen.winfo_reqheight() <= gui.HOST_H
+    assert screen.winfo_reqwidth() <= gui.WIN_W, screen.winfo_reqwidth()
+    assert screen.winfo_reqheight() <= gui.HOST_H, screen.winfo_reqheight()
 
 
 def test_home_grid_has_quest_board_button(app):
@@ -115,7 +124,7 @@ def test_populated_board_defaults_to_desktop_only(app, board):
     assert any("DE QUEST" in label for label in labels)
     assert any("GLOBAL QUEST" in label for label in labels)
     assert not any("VIDEO QUEST" in label for label in labels)
-    assert "1 other hidden" in app.quest_status_var.get()
+    assert "1 hidden" in app.quest_status_var.get()
 
 
 def test_region_filter_changes_visible_rows(app, board):

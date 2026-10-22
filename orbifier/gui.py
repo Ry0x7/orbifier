@@ -674,7 +674,7 @@ class OrbifierApp:
 
     def _listbox(self, master, height=8):
         return tk.Listbox(
-            master, height=height, bg=PANEL_DARK, fg=TEXT, font=self.font,
+            master, height=height, width=1, bg=PANEL_DARK, fg=TEXT, font=self.font,
             relief="flat", bd=0, highlightthickness=PX, highlightbackground=BORDER,
             highlightcolor=CYAN, selectbackground=MAGENTA, selectforeground=BG,
             activestyle="none", exportselection=False,
@@ -949,9 +949,22 @@ class OrbifierApp:
         tk.Label(row, textvariable=self.quest_status_var, bg=BG, fg=MUTED,
                  font=self.font_small).pack(side="right", padx=8)
 
-        self.quest_list = self._listbox(frame, height=6)
-        self.quest_list.pack(side="top", fill="x", padx=12, pady=4)
+        list_wrap = tk.Frame(frame, bg=BG)
+        list_wrap.pack(side="top", fill="x", padx=12, pady=4)
+        self.quest_list = self._listbox(list_wrap, height=6)
+        quest_scroll = tk.Scrollbar(
+            list_wrap, orient="vertical", command=self.quest_list.yview,
+            bg=PANEL_DARK, troughcolor=BG, activebackground=CYAN,
+            highlightthickness=0, bd=0, width=12,
+        )
+        self.quest_list.configure(yscrollcommand=quest_scroll.set)
+        quest_scroll.pack(side="right", fill="y", padx=(4, 0))
+        self.quest_list.pack(side="left", fill="x", expand=True)
         self.quest_list.bind("<<ListboxSelect>>", self._quest_selection_changed)
+        self.quest_list.bind(
+            "<MouseWheel>",
+            lambda e: self.quest_list.yview_scroll(int(-e.delta / 120), "units"),
+        )
 
         self.quest_detail_var = tk.StringVar(value="Open the board to load active quests.")
         tk.Label(
@@ -1074,9 +1087,9 @@ class OrbifierApp:
         hidden = len(board.filter(region=region, desktop_only=False)) - len(results)
         status = f"{len(results)} quest{'s' if len(results) != 1 else ''}"
         if desktop_only and hidden:
-            status += f" - {hidden} other hidden"
+            status += f" - {hidden} hidden"
         try:
-            status += f" - updated {board.fetched_at.astimezone():%H:%M}"
+            status += f" - {board.fetched_at.astimezone():%H:%M}"
         except Exception:
             pass
         self.quest_status_var.set(status)
