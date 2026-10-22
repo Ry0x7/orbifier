@@ -262,8 +262,8 @@ board, changes the region filter, and cancels a launch confirmation.
 - Session-only cache; no disk cache in this version.
 - Board uses the global timer/auto-close defaults; per-quest changes stay in the
   Database screen.
-- No version bump in the feature change itself; release versioning remains a
-  separate chore.
+- Release versioning is separate from the feature implementation; this release
+  uses `v1.5.0`.
 
 ## Open questions
 

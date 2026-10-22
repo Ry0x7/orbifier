@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-quest-board-design.md`
 
-**Status:** Implemented and verified on 2026-10-23. `python -m pytest tests -q` in the project venv: 103 passed. Live smoke test loaded 32 grouped campaigns (10 desktop) from 37 region codes.
+**Status:** Implemented and verified on 2026-10-23. `python -m pytest tests -q` in the project venv: 103 passed. Live smoke test loaded 32 grouped campaigns (10 desktop) from 37 region codes. Released as `v1.5.0`.
 
 ## Global Constraints
 

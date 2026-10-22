@@ -146,7 +146,7 @@ Edit `settings.py` next to the app (source run) and restart.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `VERSION` | `"1.4.0"` | Version shown in the window and used by the update check. |
+| `VERSION` | `"1.5.0"` | Version shown in the window and used by the update check. |
 | `DEVELOPER` | `"Ry0x7"` | Name shown in the status bar. |
 | `GITHUB_REPO_OWNER` | `"Ry0x7"` | Owner of the repo the exe checks for updates. |
 | `GITHUB_REPO_NAME` | `"orbifier"` | Repo the exe checks for updates. |
