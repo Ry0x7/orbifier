@@ -156,6 +156,11 @@ def credits_text(c=Colors, enter_prompt=True) -> str:
     {c.BOLD}Database Sources:{c.RESET}
     • Primary: Discord Official API
     • Backup:  GitHub Archive by Cynosphere
+
+    {c.BOLD}Quest Board Data:{c.RESET}
+    • Quest and region data: discordquest.com (unofficial public dataset)
+    • Region availability is informational; Discord decides final eligibility
+    • No Discord token is used
     
     {c.BOLD}Pro Tips:{c.RESET}
     • Use Steam Quest Mode for games not detected by modes 1 or 2

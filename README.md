@@ -30,6 +30,9 @@ It is an **educational project** based on Strykey's [orbshacker](https://github.
 | ![Steam](docs/screenshot-steam.png) | ![Active quests](docs/screenshot-active.png) |
 | **Steam**: automated fake appmanifest and executable generation for Steam-verified quests. | **Active quests**: multi-quest tracking with live block progress bars, stop controls, and auto-cleanup. |
 
+The **Quest Board** screen is reachable from the **QUEST BOARD** button on the home grid;
+it lists active quests across regions and can launch supported desktop quests.
+
 ## Get it
 
 - **Prebuilt:** grab `orbifier.exe` from the [Releases](https://github.com/Ry0x7/orbifier/releases)
@@ -70,6 +73,31 @@ and capped at 50.
 
 - Do not run Orbifier as administrator. Discord, running normally, cannot see elevated
   processes, so the game never shows up. Orbifier warns on startup if it is elevated.
+
+## Quest Board
+
+**QUEST BOARD** is a read-only discovery screen for active Discord quests. It uses the
+public, unofficial [discordquest.com](https://discordquest.com) dataset and does **not**
+log in to Discord or use a token. It shows:
+
+- quest name, game, Discord app id, reward, task type, and end time;
+- a region filter with `ALL`, `GLOBAL`, and the country codes seen in the data;
+- **DESKTOP ONLY** (default), which hides watch-video, console, and activity quests.
+
+Regional variants of one campaign are grouped into a single row. The region line shows
+either `GLOBAL`, a short country list, `GLOBAL EXCEPT ...`, or `N REGIONS`. Region data is
+informational: Discord decides eligibility, and Orbifier does not bypass region locks.
+
+For `PLAY ON DESKTOP` quests, **LAUNCH** resolves the Discord app id in the game database,
+previews the executable, timer, auto-close setting, and output path, then reuses the same
+fake-process flow as the Database screen. If the app id or executable is missing,
+**FIND GAME** jumps to the Database screen with the game name filled in. Watch-video,
+console, and activity quests can be inspected when **DESKTOP ONLY** is off, but cannot be
+launched by Orbifier. Orbifier does not auto-claim quests.
+
+The board is cached in memory for five minutes; **REFRESH** forces a reload. If a refresh
+fails, the previous data stays on screen. Quest and region data:
+[discordquest.com](https://discordquest.com) (unofficial public dataset).
 
 ## Steam quests
 
@@ -146,6 +174,7 @@ build.bat / run.bat      build the exe / run from source
 requirements.txt
 orbifier/
   gui.py                 pixel-art window, screens, ACTIVE QUESTS panel
+  quest_board.py         public Discord quest/region dataset, grouping and filtering
   quests.py              quest bookkeeping: countdown, status, stop and cleanup
   faker.py               copies and launches the placeholder exe
   timer.py               keep-alive window with countdown and tray support
@@ -172,6 +201,10 @@ Huge credit and special thanks go to **Strykey** for pioneering the process-name
 
 - **Original Project Repository:** [https://github.com/strykey/orbshacker](https://github.com/strykey/orbshacker)
 - **Original Author:** [Strykey](https://github.com/strykey)
+
+The **Quest Board** uses the public, unofficial [discordquest.com](https://discordquest.com)
+dataset for quest and region information. Region availability is informational; Discord
+decides final eligibility.
 
 ## Support
 
