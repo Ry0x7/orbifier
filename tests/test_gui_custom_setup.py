@@ -9,12 +9,13 @@ def app(gui_app):
     return gui_app
 
 
-def test_changed_screens_fit_existing_window(app):
+@pytest.mark.parametrize("width", [gui.WIN_W, gui.DEFAULT_W])
+def test_changed_screens_fit_window(app, width):
     for name in ("manual", "database", "steam"):
         app.show(name)
         app.root.update_idletasks()
         screen = app.screens[name]
-        assert screen.winfo_reqwidth() <= gui.WIN_W, (name, screen.winfo_reqwidth())
+        assert screen.winfo_reqwidth() <= width, (name, width, screen.winfo_reqwidth())
         assert screen.winfo_reqheight() <= gui.HOST_H, (name, screen.winfo_reqheight())
 
 

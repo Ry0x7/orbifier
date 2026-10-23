@@ -751,7 +751,7 @@ class OrbifierApp:
                     scale=2).pack(side="left")
 
         self.db_list = self._listbox(frame, height=6)
-        self.db_list.pack(side="top", fill="x", padx=12, pady=4)
+        self.db_list.pack(side="top", fill="both", expand=True, padx=12, pady=4)
 
         row2 = self._row(frame)
         self._label(row2, "OVERRIDE EXE").pack(side="left")
@@ -962,7 +962,7 @@ class OrbifierApp:
                  font=self.font_small).pack(side="right", padx=8)
 
         list_wrap = tk.Frame(frame, bg=BG)
-        list_wrap.pack(side="top", fill="x", padx=12, pady=4)
+        list_wrap.pack(side="top", fill="both", expand=True, padx=12, pady=4)
         self.quest_list = self._listbox(list_wrap, height=6)
         quest_scroll = tk.Scrollbar(
             list_wrap, orient="vertical", command=self.quest_list.yview,
@@ -971,7 +971,7 @@ class OrbifierApp:
         )
         self.quest_list.configure(yscrollcommand=quest_scroll.set)
         quest_scroll.pack(side="right", fill="y", padx=(4, 0))
-        self.quest_list.pack(side="left", fill="x", expand=True)
+        self.quest_list.pack(side="left", fill="both", expand=True)
         self.quest_list.bind("<<ListboxSelect>>", self._quest_selection_changed)
         self.quest_list.bind(
             "<MouseWheel>",
@@ -979,11 +979,13 @@ class OrbifierApp:
         )
 
         self.quest_detail_var = tk.StringVar(value="Open the board to load active quests.")
-        tk.Label(
+        self.quest_detail_label = tk.Label(
             frame, textvariable=self.quest_detail_var, bg=BG, fg=TEXT,
             font=self.font_small, anchor="w", justify="left",
             wraplength=WIN_W - 48,
-        ).pack(side="top", fill="x", padx=12, pady=(2, 4))
+        )
+        self.quest_detail_label.pack(side="top", fill="x", padx=12, pady=(2, 4))
+        frame.bind("<Configure>", self._resize_quest_detail)
 
         actions = self._row(frame, pady=2)
         self.quest_launch_btn = PixelButton(
@@ -1004,6 +1006,10 @@ class OrbifierApp:
             MUTED,
         ).pack(side="left")
         return frame
+
+    def _resize_quest_detail(self, event):
+        """Keep the quest detail text inside the current window width."""
+        self.quest_detail_label.configure(wraplength=max(400, event.width - 48))
 
     def _on_show_quests(self):
         self.ensure_db_loaded()
@@ -1432,7 +1438,7 @@ class OrbifierApp:
                     scale=2).pack(side="left")
 
         self.steam_list = self._listbox(frame, height=3)
-        self.steam_list.pack(side="top", fill="x", padx=12, pady=4)
+        self.steam_list.pack(side="top", fill="both", expand=True, padx=12, pady=4)
 
         details = self._row(frame, pady=2)
         self._label(details, "INSTALL FOLDER").pack(side="left")

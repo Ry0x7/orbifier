@@ -1,5 +1,6 @@
 """Tk-level tests for the Quest Board screen (no network or launching)."""
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -104,9 +105,14 @@ def test_quest_board_screen_fits_window(app):
         ),
     )
     app.show("quests")
+    app._resize_quest_detail(SimpleNamespace(width=gui.WIN_W))
     app.root.update_idletasks()
     screen = app.screens["quests"]
     assert screen.winfo_reqwidth() <= gui.WIN_W, screen.winfo_reqwidth()
+
+    app._resize_quest_detail(SimpleNamespace(width=gui.DEFAULT_W))
+    app.root.update_idletasks()
+    assert screen.winfo_reqwidth() <= gui.DEFAULT_W, screen.winfo_reqwidth()
     assert screen.winfo_reqheight() <= gui.HOST_H, screen.winfo_reqheight()
 
 
