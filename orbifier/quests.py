@@ -122,14 +122,20 @@ class QuestTracker:
             return DONE
         return RUNNING
 
-    def stop(self, quest: Quest) -> None:
+    def stop(self, quest: Quest, clean_files: bool = True) -> None:
         """Drop the quest, stop its process and delete its copied exe."""
         self.remove(quest)
-        self.cleanup(quest)
+        self.cleanup(quest, clean_files=clean_files)
 
-    def cleanup(self, quest: Quest) -> None:
-        """Stop the process, delete its copied exe, and clean up empty directories."""
+    def cleanup(self, quest: Quest, clean_files: bool = True) -> None:
+        """Stop the process, delete its copied exe, and clean up empty directories.
+
+        With ``clean_files=False`` the process is still stopped and the quest is
+        still removed, but nothing on disk is deleted.
+        """
         self._stopper(quest.proc)
+        if not clean_files:
+            return
         path = quest.exe_path
         if path is None:
             return
@@ -178,9 +184,9 @@ class QuestTracker:
         except Exception:
             pass
 
-    def stop_all(self) -> None:
+    def stop_all(self, clean_files: bool = True) -> None:
         for quest in list(self.quests):
-            self.stop(quest)
+            self.stop(quest, clean_files=clean_files)
 
     def remove(self, quest: Quest) -> None:
         if quest in self.quests:

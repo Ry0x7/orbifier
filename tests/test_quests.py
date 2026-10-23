@@ -260,3 +260,30 @@ class TestQuestTracker:
         tracker.stop(quest)
         assert not runtime_dir.exists()
         assert not exe.exists()
+
+    def test_stop_without_clean_stops_process_and_keeps_files(self, tmp_path):
+        tracker, _clock = make_tracker()
+        exe = tmp_path / "game.exe"
+        exe.write_bytes(b"x")
+        helper = tmp_path / "helper.pyw"
+        helper.write_text("x")
+        proc = FakeProc()
+        quest = tracker.add("Game", proc, exe, cleanup_root=tmp_path,
+                            cleanup_files=(helper,))
+        tracker.stop(quest, clean_files=False)
+        assert proc.terminated
+        assert tracker.quests == []
+        assert exe.exists()
+        assert helper.exists()
+
+    def test_stop_all_without_clean_keeps_each_exe(self, tmp_path):
+        tracker, _clock = make_tracker()
+        exes = []
+        for i in range(2):
+            exe = tmp_path / f"game{i}.exe"
+            exe.write_bytes(b"x")
+            tracker.add(f"Game{i}", FakeProc(), exe)
+            exes.append(exe)
+        tracker.stop_all(clean_files=False)
+        assert tracker.quests == []
+        assert all(exe.exists() for exe in exes)
