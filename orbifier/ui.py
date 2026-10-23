@@ -169,7 +169,7 @@ def credits_text(c=Colors, enter_prompt=True) -> str:
     
     {c.BOLD}{c.GREEN}Multi-Game Emulation:{c.RESET}
     • Run this tool multiple times to emulate multiple games at once
-    • Complete ALL orb quests simultaneously in just 15 minutes
+    • Complete ALL orb quests simultaneously in just {config.QUEST_MINUTES} minutes
     
     {c.BOLD}{c.RED}WARNING - EDUCATIONAL USE ONLY - USE AT YOUR OWN RISK{c.RESET}
     • Users are SOLELY responsible for compliance with Discord ToS

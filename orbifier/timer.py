@@ -20,7 +20,7 @@ ACCENT_COLOR  = "#00e5ff"
 GREEN_COLOR   = "#4ade80"
 MUTED_COLOR   = "#8b90a0"
 DONE_COLOR    = "#ff6b8b"
-DEFAULT_MINS  = 15
+DEFAULT_MINS  = 20
 
 
 class TimerApp:

@@ -22,6 +22,6 @@ SLEEP_LONG  = 2.0
 MAX_SEARCH_RESULTS = 50
 
 # ── Quests ────────────────────────────────────────────────────
-QUEST_MINUTES = 15   # minutes the ACTIVE QUESTS countdown runs per game
+QUEST_MINUTES = 20   # minutes the ACTIVE QUESTS countdown runs per game
 AUTO_CLOSE    = True # automatically close fake game when timer reaches 00:00
 AUTO_CLEAN    = True # automatically delete fake exe & directory after quest stops

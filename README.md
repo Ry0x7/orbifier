@@ -154,7 +154,7 @@ Edit `settings.py` next to the app (source run) and restart.
 | `SLEEP_SHORT` | `1.0` | Short pause (seconds) in the console menu. |
 | `SLEEP_LONG` | `2.0` | Long pause (seconds) in the console menu. |
 | `MAX_SEARCH_RESULTS` | `50` | Maximum games listed per database search. |
-| `QUEST_MINUTES` | `15` | Default length of the ACTIVE QUESTS countdown per game. |
+| `QUEST_MINUTES` | `20` | Default length of the ACTIVE QUESTS countdown per game. |
 | `AUTO_CLOSE` | `True` | Automatically close the fake game process when timer completes. |
 | `AUTO_CLEAN` | `True` | Automatically remove fake exe and empty directories on stop. |
 

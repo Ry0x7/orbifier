@@ -33,7 +33,7 @@ ACCENT_COLOR  = "#00e5ff"
 GREEN_COLOR   = "#4ade80"
 MUTED_COLOR   = "#8b90a0"
 DONE_COLOR    = "#ff6b8b"
-DEFAULT_MINS  = 15
+DEFAULT_MINS  = 20
 
 class TimerApp:
     def __init__(self, root, name="", duration_s=DEFAULT_MINS * 60, started=None, auto_close=True):
@@ -369,7 +369,7 @@ class GameFaker:
     def launch_executable(
         self,
         exe_path: Path,
-        duration_s: float = 900.0,
+        duration_s: float | None = None,
         start_time: float | None = None,
         auto_close: bool = True,
     ) -> "subprocess.Popen | None":
@@ -377,6 +377,8 @@ class GameFaker:
 
         Returns the Popen object (truthy) on success, or None on failure.
         """
+        if duration_s is None:
+            duration_s = float(config.QUEST_MINUTES) * 60
         try:
             loading_animation("Launching process", 0.8)
 

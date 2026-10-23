@@ -69,6 +69,6 @@ SLEEP_SHORT        = _get("SLEEP_SHORT",        1.0)
 SLEEP_LONG         = _get("SLEEP_LONG",         2.0)
 FAKE_EXE_DIR       = _get("FAKE_EXE_DIR",       "Win64")
 MAX_SEARCH_RESULTS = _get("MAX_SEARCH_RESULTS", 50)
-QUEST_MINUTES      = _get("QUEST_MINUTES",      15)  # countdown shown in ACTIVE QUESTS
+QUEST_MINUTES      = _get("QUEST_MINUTES",      20)  # countdown shown in ACTIVE QUESTS
 AUTO_CLOSE         = _get("AUTO_CLOSE",         True)
 AUTO_CLEAN         = _get("AUTO_CLEAN",         True)
