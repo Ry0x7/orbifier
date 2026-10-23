@@ -804,10 +804,10 @@ git commit -m "Honor auto-clean and close-on-exit settings"
 
 ---
 
-### Task 6: CLI defaults and update-check gate
+### Task 6: Auto-close CLI default and update-check gate
 
 **Files:**
-- Modify: `orbifier/faker.py:36`, `orbifier/faker.py:188`, `orbifier/faker.py:355-364`
+- Modify: `orbifier/faker.py` (`launch_executable` near line 369)
 - Modify: `orbifier/main.py:18-23`
 - Create: `tests/test_cli_defaults.py`
 
@@ -834,26 +834,12 @@ def _game(monkeypatch):
     return faker.GameFaker()
 
 
-def test_launch_defaults_from_config(tmp_path, monkeypatch):
+def test_launch_auto_close_uses_config(tmp_path, monkeypatch):
     exe = tmp_path / "Game.exe"
     exe.write_bytes(b"x")
-    monkeypatch.setattr(config, "QUEST_MINUTES", 25)
     monkeypatch.setattr(config, "AUTO_CLOSE", False)
     proc = _game(monkeypatch).launch_executable(exe)
-    assert proc.args[proc.args.index("--duration") + 1] == "1500"
     assert proc.args[proc.args.index("--auto-close") + 1] == "0"
-
-
-def test_launch_explicit_arguments_win(tmp_path, monkeypatch):
-    exe = tmp_path / "Game.exe"
-    exe.write_bytes(b"x")
-    proc = _game(monkeypatch).launch_executable(exe, duration_s=60, auto_close=True)
-    assert proc.args[proc.args.index("--duration") + 1] == "60"
-    assert proc.args[proc.args.index("--auto-close") + 1] == "1"
-
-
-def test_embedded_timer_defaults_to_twenty():
-    assert "DEFAULT_MINS  = 20" in faker._TIMER_PYW_CODE
 
 
 def test_update_check_can_be_disabled(monkeypatch):
@@ -871,17 +857,15 @@ def test_update_check_can_be_disabled(monkeypatch):
 
 Run: `python -m pytest tests/test_cli_defaults.py -v`
 
-Expected: FAIL because the defaults are 15/True and `_run_update_check` does not exist.
+Expected: FAIL because `--auto-close` is still `1` when `AUTO_CLOSE` is false,
+and `_run_update_check` does not exist.
 
-- [ ] **Step 3: Implement the defaults and gate**
+- [ ] **Step 3: Implement the auto-close default and gate**
 
-- In `faker.py`, change the embedded `DEFAULT_MINS` from 15 to 20. The embedded
-  `TimerApp` and `run_timer` already derive their defaults from that constant.
-- Change `launch_executable` to accept `duration_s: float | None = None` and
-  `auto_close: bool | None = None`. At the start of the method:
+- In `faker.py`, change `launch_executable`'s `auto_close` default to
+  `auto_close: bool | None = None`. The `duration_s=None` resolution was added
+  by the resizable plan. At the start of the method add:
   ```python
-  if duration_s is None:
-      duration_s = float(config.QUEST_MINUTES) * 60
   if auto_close is None:
       auto_close = bool(config.AUTO_CLOSE)
   ```
@@ -908,7 +892,7 @@ Expected: all pass.
 
 ```bash
 git add orbifier/faker.py orbifier/main.py tests/test_cli_defaults.py
-git commit -m "Honor settings in CLI defaults and update check"
+git commit -m "Honor auto-close and update-check settings in the CLI"
 ```
 
 ---

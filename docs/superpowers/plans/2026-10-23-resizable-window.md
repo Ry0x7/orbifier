@@ -16,17 +16,21 @@
 - Minimum client size is 800×560; default client size is 900×640, clamped to `screen_w - 80` and `screen_h - 120`.
 - The screen host expands; the log stays 136 px and the status bar stays 32 px.
 - Quest Board, Database, and Steam result lists expand vertically. Their listbox `height` values remain the requested minimum.
-- The default timer is 20 minutes in `settings.py`, the `config.py` fallback, `timer.DEFAULT_MINS`, credits text, and the README settings table.
+- The default timer is 20 minutes in `settings.py`, the `config.py` fallback, `timer.DEFAULT_MINS`, the embedded `faker.py` keep-alive, the `launch_executable` default, credits text, and the README settings table.
 - Preserve the pixel-art style and all launch, cleanup, and quest-tracking behavior.
 - `python -m pytest tests -q` must pass.
 
 ## Review Focus
 
 - **Display smaller than the default window:** the window must clamp to the usable screen but never go below 800×560. Pinned by `test_initial_window_size_clamps_to_display` in Task 1.
-- **User resizes down to the minimum:** headers, detail text, and action rows must not clip or force horizontal overflow. Pinned by the updated `test_quest_board_screen_fits_window` in Task 2 and the existing Manual/Database/Steam fit test.
+- **User resizes down to the minimum:** headers, detail text, and action rows must not clip or force horizontal overflow. Pinned by the updated `test_quest_board_screen_fits_window` and `test_changed_screens_fit_window` in Task 2.
 - **User enlarges the window:** extra height must go to the active screen and its result list, not to the log or status bar. Pinned by `test_window_is_resizable_with_minimum_size` in Task 1 and `test_result_lists_expand_vertically` in Task 2.
 - **Long Quest Board detail names:** the detail label must wrap to the current width instead of widening the screen. Pinned by `test_quest_detail_rewraps_to_width` in Task 2.
-- **Timer default drift:** settings, config fallback, timer fallback, credits, and README must all report 20 minutes. Pinned by `test_default_timer_is_twenty_minutes` and `test_credits_mention_twenty_minutes` in Task 3.
+- **Timer default drift:** settings, config fallback, timer fallback, embedded
+  keep-alive, CLI launcher, credits, and README must all report 20 minutes.
+  Pinned by `test_default_timer_is_twenty_minutes`,
+  `test_credits_mention_twenty_minutes`, `test_embedded_timer_defaults_to_twenty`,
+  and `test_launch_uses_configured_timer_default` in Task 3.
 
 ---
 
@@ -166,6 +170,7 @@ git commit -m "Make the main window resizable"
 **Files:**
 - Modify: `orbifier/gui.py` (Quest Board list/detail near line 952, Database list near line 741, Steam list near line 1422)
 - Modify: `tests/test_gui_quest_board.py` (fit test near line 96)
+- Modify: `tests/test_gui_custom_setup.py` (fit test near line 12)
 - Test: `tests/test_gui_resize.py`
 
 **Interfaces:**
@@ -240,7 +245,7 @@ Steam list:
 self.steam_list.pack(side="top", fill="both", expand=True, padx=12, pady=4)
 ```
 
-- [ ] **Step 4: Update the Quest Board fit test for both widths**
+- [ ] **Step 4: Update the fit tests for both widths**
 
 In `tests/test_gui_quest_board.py`, add `from types import SimpleNamespace` at the
 top. Replace the assertions in `test_quest_board_screen_fits_window` with:
@@ -258,16 +263,30 @@ top. Replace the assertions in `test_quest_board_screen_fits_window` with:
     assert screen.winfo_reqheight() <= gui.HOST_H, screen.winfo_reqheight()
 ```
 
+In `tests/test_gui_custom_setup.py`, parametrize the existing fit test over both
+client widths:
+
+```python
+@pytest.mark.parametrize("width", [gui.WIN_W, gui.DEFAULT_W])
+def test_changed_screens_fit_window(app, width):
+    for name in ("manual", "database", "steam"):
+        app.show(name)
+        app.root.update_idletasks()
+        screen = app.screens[name]
+        assert screen.winfo_reqwidth() <= width, (name, width, screen.winfo_reqwidth())
+        assert screen.winfo_reqheight() <= gui.HOST_H, (name, screen.winfo_reqheight())
+```
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `python -m pytest tests/test_gui_resize.py tests/test_gui_quest_board.py -v`
+Run: `python -m pytest tests/test_gui_resize.py tests/test_gui_quest_board.py tests/test_gui_custom_setup.py -v`
 
 Expected: all pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add orbifier/gui.py tests/test_gui_resize.py tests/test_gui_quest_board.py
+git add orbifier/gui.py tests/test_gui_resize.py tests/test_gui_quest_board.py tests/test_gui_custom_setup.py
 git commit -m "Expand result lists with the window"
 ```
 
@@ -276,14 +295,17 @@ git commit -m "Expand result lists with the window"
 ### Task 3: Default quest timer to 20 minutes
 
 **Files:**
-- Modify: `settings.py:25`, `orbifier/config.py:72`, `orbifier/timer.py:23`, `orbifier/ui.py:172`, `README.md:157`
+- Modify: `settings.py:25`, `orbifier/config.py:72`, `orbifier/timer.py:23`,
+  `orbifier/faker.py` (`DEFAULT_MINS` near line 36 and `launch_executable` near
+  line 369), `orbifier/ui.py:172`, `README.md:157`
 - Test: `tests/test_timer_default.py` (create)
 
 **Interfaces:**
 - Consumes: existing `config.QUEST_MINUTES`, `timer.DEFAULT_MINS`, `ui.credits_text`.
-- Produces: no new API; all shipped default timer values are 20.
+- Produces: `GameFaker.launch_executable(exe_path, duration_s=None, ...)`; all
+  shipped default timer values are 20.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 Create `tests/test_timer_default.py`:
 
@@ -291,8 +313,13 @@ Create `tests/test_timer_default.py`:
 """The shipped timer default stays consistent across code and credits."""
 import settings
 
-from orbifier import config, timer
+from orbifier import config, faker, timer
 from orbifier.ui import _NoColors, credits_text
+
+
+class FakePopen:
+    def __init__(self, args, **kwargs):
+        self.args = args
 
 
 def test_default_timer_is_twenty_minutes():
@@ -303,19 +330,43 @@ def test_default_timer_is_twenty_minutes():
 
 def test_credits_mention_twenty_minutes():
     assert "20 minutes" in credits_text(c=_NoColors, enter_prompt=False)
+
+
+def test_embedded_timer_defaults_to_twenty():
+    assert "DEFAULT_MINS  = 20" in faker._TIMER_PYW_CODE
+
+
+def test_launch_uses_configured_timer_default(tmp_path, monkeypatch):
+    exe = tmp_path / "Game.exe"
+    exe.write_bytes(b"x")
+    monkeypatch.setattr(faker.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(faker, "loading_animation", lambda *a, **k: None)
+    monkeypatch.setattr(faker, "print_color", lambda *a, **k: None)
+    monkeypatch.setattr(config, "QUEST_MINUTES", 25)
+    proc = faker.GameFaker().launch_executable(exe)
+    assert proc.args[proc.args.index("--duration") + 1] == "1500"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_timer_default.py -v`
 
-Expected: FAIL because the defaults and credits text still use 15.
+Expected: FAIL because the defaults are 15, the credits text uses 15, and the
+launcher starts at 900 seconds.
 
 - [ ] **Step 3: Change the defaults**
 
 - `settings.py`: `QUEST_MINUTES = 20`
 - `orbifier/config.py`: `_get("QUEST_MINUTES", 20)`
 - `orbifier/timer.py`: `DEFAULT_MINS = 20`
+- `orbifier/faker.py`: change the embedded `DEFAULT_MINS` from 15 to 20; change
+  `launch_executable` to accept `duration_s: float | None = None` and resolve it
+  at the start of the method:
+  ```python
+  if duration_s is None:
+      duration_s = float(config.QUEST_MINUTES) * 60
+  ```
+  Leave the `auto_close` default unchanged; the settings plan handles it.
 - `orbifier/ui.py`: change the credits line to
   `• Complete ALL orb quests simultaneously in just {config.QUEST_MINUTES} minutes`
 - `README.md`: change the `QUEST_MINUTES` default row from `15` to `20`
@@ -323,16 +374,16 @@ Expected: FAIL because the defaults and credits text still use 15.
 No GUI field logic changes are needed; the fields already seed from
 `config.QUEST_MINUTES`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_timer_default.py -v`
 
-Expected: 2 passed.
+Expected: 4 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add settings.py orbifier/config.py orbifier/timer.py orbifier/ui.py README.md tests/test_timer_default.py
+git add settings.py orbifier/config.py orbifier/timer.py orbifier/faker.py orbifier/ui.py README.md tests/test_timer_default.py
 git commit -m "Default quest timer to 20 minutes"
 ```
 
