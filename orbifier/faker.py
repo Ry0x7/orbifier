@@ -769,7 +769,7 @@ class GameFaker:
         exe_path: Path,
         duration_s: float | None = None,
         start_time: float | None = None,
-        auto_close: bool = True,
+        auto_close: bool | None = None,
     ) -> "subprocess.Popen | None":
         """Launch the fake game process in background.
 
@@ -777,6 +777,8 @@ class GameFaker:
         """
         if duration_s is None:
             duration_s = float(config.QUEST_MINUTES) * 60
+        if auto_close is None:
+            auto_close = bool(config.AUTO_CLOSE)
         try:
             loading_animation("Launching process", 0.8)
 

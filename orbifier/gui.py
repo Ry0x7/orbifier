@@ -20,7 +20,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import messagebox, filedialog
 
-from . import config, ui
+from . import config, ui, user_settings
 from . import steam
 from .ui import Colors
 from .errors import OrbifierError
@@ -429,7 +429,7 @@ class OrbifierApp:
 
         self.db_results: list = []
         self.steam_results: list = []
-        self.output_directory = tk.StringVar(value=str(self.faker.desktop_path / config.FAKE_EXE_DIR))
+        self.output_directory = tk.StringVar(value=self._default_output_dir())
 
         self.quest_board_data: QuestBoard | None = None
         self.quest_board_loading = False
@@ -448,8 +448,12 @@ class OrbifierApp:
             "steam":    self._build_steam(),
             "credits":  self._build_credits(),
             "active":   self._build_active(),
+            "settings": self._build_settings(),
         }
         self.current = None
+        # Show the effective config in the per-launch fields, so they read as
+        # "25" rather than "25.0" and follow any saved override.
+        self._apply_settings_to_gui()
 
         # Route every print_color() from the service modules into the log panel.
         ui.set_output_hook(lambda text, color: self.post(
@@ -458,6 +462,8 @@ class OrbifierApp:
 
         self.show("home")
         self.log(f"Orbifier v{config.VERSION} ready.", "ok")
+        if user_settings.LOAD_ERROR:
+            self.log(f"[!] {user_settings.LOAD_ERROR}", "warn")
         self.log("Educational use only. Use at your own risk. Faking game activity may violate Discord's ToS.", "warn")
         if is_process_elevated():
             self.log(f"[!] {ELEVATED_WARNING}", "warn")
@@ -601,6 +607,7 @@ class OrbifierApp:
             hook()
 
     def close(self) -> None:
+        self._stop_quests_for_exit()
         if hasattr(self, "tray") and self.tray:
             try:
                 self.tray.stop()
@@ -704,6 +711,10 @@ class OrbifierApp:
         top.pack(side="top", fill="x", pady=(14, 4), padx=12)
         PixelButton(top, "TRAY", self.hide_to_tray, width=100, height=40,
                     color=CYAN, scale=2).pack(side="right")
+        self.home_settings_button = PixelButton(
+            top, "SETTINGS", lambda: self.show("settings"),
+            width=140, height=40, color=YELLOW, scale=2)
+        self.home_settings_button.pack(side="right", padx=(0, 8))
         self.home_logo = OrbLogo(top, scale=6)
         self.home_logo.pack(side="left", padx=(0, 18))
         title = "ORBIFIER"
@@ -737,6 +748,138 @@ class OrbifierApp:
         self.home_quests.pack(side="top", fill="x", padx=12, pady=(10, 0))
         self.quest_panels.append(self.home_quests)
         return frame
+
+    # ── Settings ──────────────────────────────────────────────────────────────
+    def _default_output_dir(self) -> str:
+        """Output folder used when no override is saved (blank means desktop)."""
+        raw = str(config.OUTPUT_DIR or "").strip()
+        if raw:
+            return str(Path(raw).expanduser())
+        return str(self.faker.desktop_path / config.FAKE_EXE_DIR)
+
+    def _build_settings(self) -> tk.Frame:
+        frame = self._screen("SETTINGS")
+
+        row = self._row(frame, pady=4)
+        self._label(row, "DEFAULT TIMER (MIN)").pack(side="left")
+        self.settings_minutes = self._entry(row, width=6)
+        self.settings_minutes.pack(side="left", padx=8, ipady=3)
+        self.settings_autoclose = tk.BooleanVar(value=config.AUTO_CLOSE)
+        tk.Checkbutton(row, text="AUTO-CLOSE WHEN TIMER ENDS",
+                       variable=self.settings_autoclose, bg=BG, fg=TEXT,
+                       selectcolor=PANEL_DARK, activebackground=BG,
+                       activeforeground=TEXT,
+                       font=self.font_small).pack(side="left", padx=4)
+
+        row = self._row(frame, pady=4)
+        self.settings_autoclean = tk.BooleanVar(value=config.AUTO_CLEAN)
+        tk.Checkbutton(row, text="AUTO-CLEAN FILES AFTER STOP",
+                       variable=self.settings_autoclean, bg=BG, fg=TEXT,
+                       selectcolor=PANEL_DARK, activebackground=BG,
+                       activeforeground=TEXT,
+                       font=self.font_small).pack(side="left", padx=4)
+        self.settings_close_on_exit = tk.BooleanVar(value=config.CLOSE_QUESTS_ON_EXIT)
+        tk.Checkbutton(row, text="STOP QUESTS WHEN ORBIFIER CLOSES",
+                       variable=self.settings_close_on_exit, bg=BG, fg=TEXT,
+                       selectcolor=PANEL_DARK, activebackground=BG,
+                       activeforeground=TEXT,
+                       font=self.font_small).pack(side="left", padx=16)
+
+        row = self._row(frame, pady=4)
+        self.settings_check_updates = tk.BooleanVar(value=config.CHECK_UPDATES)
+        tk.Checkbutton(row, text="CHECK FOR UPDATES AT STARTUP",
+                       variable=self.settings_check_updates, bg=BG, fg=TEXT,
+                       selectcolor=PANEL_DARK, activebackground=BG,
+                       activeforeground=TEXT,
+                       font=self.font_small).pack(side="left", padx=4)
+        tk.Label(row, text="(APPLIES NEXT LAUNCH)", bg=BG, fg=MUTED,
+                 font=self.font_small).pack(side="left", padx=8)
+
+        self.settings_output = tk.StringVar(value=str(config.OUTPUT_DIR or ""))
+        self._directory_row(frame, self.settings_output, "DEFAULT OUTPUT FOLDER")
+        self._label(self._row(frame, pady=2),
+                    f"BLANK = DESKTOP\\{config.FAKE_EXE_DIR}", fg=MUTED).pack(side="left")
+
+        actions = self._row(frame, pady=14)
+        PixelButton(actions, "SAVE", self.settings_save,
+                    width=120, height=38, color=GREEN, scale=2).pack(side="left")
+        PixelButton(actions, "RESET", self.settings_reset,
+                    width=120, height=38, color=RED, scale=2).pack(side="left", padx=8)
+        self.settings_status_var = tk.StringVar(value="EDIT SETTINGS")
+        tk.Label(actions, textvariable=self.settings_status_var, bg=BG, fg=MUTED,
+                 font=self.font_small, wraplength=WIN_W - 300, justify="left",
+                 anchor="w").pack(side="left", fill="x", expand=True, padx=12)
+
+        tk.Label(frame, text=f"FILE: {user_settings.settings_path()}", bg=BG, fg=MUTED,
+                 font=self.font_small, wraplength=WIN_W - 48, justify="left",
+                 anchor="w").pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+        return frame
+
+    def _on_show_settings(self) -> None:
+        self.settings_minutes.delete(0, "end")
+        self.settings_minutes.insert(0, f"{config.QUEST_MINUTES:g}")
+        self.settings_autoclose.set(bool(config.AUTO_CLOSE))
+        self.settings_autoclean.set(bool(config.AUTO_CLEAN))
+        self.settings_close_on_exit.set(bool(config.CLOSE_QUESTS_ON_EXIT))
+        self.settings_check_updates.set(bool(config.CHECK_UPDATES))
+        self.settings_output.set(str(config.OUTPUT_DIR or ""))
+        self.settings_status_var.set("EDIT SETTINGS")
+
+    def settings_save(self) -> None:
+        """Validate, persist, then apply the on-screen settings."""
+        values = {
+            "QUEST_MINUTES": self.settings_minutes.get().strip(),
+            "AUTO_CLOSE": self.settings_autoclose.get(),
+            "AUTO_CLEAN": self.settings_autoclean.get(),
+            "CLOSE_QUESTS_ON_EXIT": self.settings_close_on_exit.get(),
+            "OUTPUT_DIR": self.settings_output.get().strip(),
+            "CHECK_UPDATES": self.settings_check_updates.get(),
+        }
+        try:
+            clean = user_settings.validate(values)
+            path = user_settings.save_overrides(clean)
+            config.apply_overrides(clean)
+        except ValueError as e:
+            self.settings_status_var.set(str(e))
+            self.log(f"[!] {e}", "warn")
+            return
+        self._apply_settings_to_gui()
+        self.settings_output.set(str(config.OUTPUT_DIR or ""))
+        self.settings_status_var.set(f"SAVED TO {path}")
+        self.log(f"[OK] Settings saved to {path}", "ok")
+        self.log("[*] Update-check changes apply on the next launch.", "info")
+
+    def settings_reset(self) -> None:
+        """Delete the saved file and restore the settings.py defaults."""
+        if not messagebox.askyesno(
+            "Orbifier - Reset Settings",
+            "Delete the saved settings file and restore the defaults from settings.py?",
+            parent=self.root,
+        ):
+            self.log("[!] Reset cancelled.", "warn")
+            return
+        try:
+            user_settings.delete_overrides()
+            config.reset_overrides()
+        except ValueError as e:
+            self.settings_status_var.set(str(e))
+            self.log(f"[!] {e}", "warn")
+            return
+        self._on_show_settings()
+        self._apply_settings_to_gui()
+        self.settings_status_var.set("RESET TO SETTINGS.PY DEFAULTS")
+        self.log("[OK] Settings reset to settings.py defaults.", "ok")
+
+    def _apply_settings_to_gui(self) -> None:
+        """Push the effective config into the shared widgets and tracker."""
+        minutes = f"{config.QUEST_MINUTES:g}"
+        for entry in (self.db_minutes, self.manual_minutes, self.steam_minutes):
+            entry.delete(0, "end")
+            entry.insert(0, minutes)
+        for var in (self.db_autoclose, self.manual_autoclose, self.steam_autoclose):
+            var.set(bool(config.AUTO_CLOSE))
+        self.quests.duration = float(config.QUEST_MINUTES) * 60
+        self.output_directory.set(self._default_output_dir())
 
     # ── Database ──────────────────────────────────────────────────────────────
     def _build_database(self) -> tk.Frame:
@@ -1734,9 +1877,10 @@ class OrbifierApp:
             auto_close=auto_close,
             cleanup_root=cleanup_root,
             # Only this quest's own folder: nested folders belong to other
-            # quests and their helpers must survive this cleanup.
-            cleanup_files=tuple(p for p in self.faker.created_helpers
-                                if p.parent == parent),
+            # quests and their helpers must survive this cleanup. Helpers are
+            # found on disk, not just in this session's created set, so a quest
+            # started after a restart still cleans up the shared runtime.
+            cleanup_files=tuple(self.faker.owned_helpers(parent)),
         )
         self._refresh_quests()
 
@@ -1745,7 +1889,8 @@ class OrbifierApp:
             panel.refresh()
 
     def _tick_quests(self):
-        # Auto-stop and clean up completed quests if auto_close is enabled
+        # Auto-stop completed quests when auto-close is enabled; files are only
+        # removed when AUTO_CLEAN is on.
         auto_done = [
             q for q in list(self.quests.quests)
             if getattr(q, "auto_close", True) and self.quests.status(q) == DONE
@@ -1753,7 +1898,16 @@ class OrbifierApp:
         if auto_done:
             self._stop_quests(auto_done)
             for q in auto_done:
-                self.log(f"[OK] {q.name} quest complete! Auto-closed and cleaned up.", "ok")
+                if config.AUTO_CLEAN:
+                    self.log(f"[OK] {q.name} quest complete! Auto-closed and cleaned up.", "ok")
+                else:
+                    self.log(f"[OK] {q.name} quest complete! Auto-closed; files kept.", "ok")
+
+        if config.AUTO_CLEAN:
+            stopped = [q for q in list(self.quests.quests)
+                       if self.quests.status(q) == STOPPED]
+            if stopped:
+                self._stop_quests(stopped)
 
         self._refresh_quests()
         self.root.after(1000, self._tick_quests)
@@ -1769,16 +1923,23 @@ class OrbifierApp:
             return
         self._stop_quests(list(self.quests.quests))
 
+    def _stop_quests_for_exit(self) -> None:
+        """Stop every quest on shutdown when the setting asks for it."""
+        if not config.CLOSE_QUESTS_ON_EXIT:
+            return
+        self.quests.stop_all(clean_files=config.AUTO_CLEAN)
+
     def _stop_quests(self, quests) -> None:
         """Drop the rows now; terminate the processes and delete the exes off-thread."""
         for quest in quests:
             self.quests.remove(quest)
         self._refresh_quests()
         tracker = self.quests
+        clean_files = config.AUTO_CLEAN
 
         def worker():
             for quest in quests:
-                tracker.cleanup(quest)
+                tracker.cleanup(quest, clean_files=clean_files)
                 self.post(lambda n=quest.name: self.log(f"[OK] Stopped {n}", "ok"))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1814,5 +1975,5 @@ class OrbifierApp:
 def run_gui() -> None:
     """Create the Orbifier window and run the Tk main loop."""
     root = tk.Tk()
-    OrbifierApp(root)
+    OrbifierApp(root, check_updates=config.CHECK_UPDATES)
     root.mainloop()

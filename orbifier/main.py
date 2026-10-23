@@ -15,12 +15,19 @@ from .updater import auto_update
 from .errors import DatabaseLoadError
 
 
-def main() -> None:
-    """Main application loop."""
+def _run_update_check() -> None:
+    """Run the startup update check unless the user turned it off."""
+    if not config.CHECK_UPDATES:
+        return
     try:
         auto_update()
     except Exception:
         pass
+
+
+def main() -> None:
+    """Main application loop."""
+    _run_update_check()
 
     print_banner()
     print_color("Initializing Discord Orb Quest Faker...", Colors.CYAN)
