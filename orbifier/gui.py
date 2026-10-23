@@ -46,12 +46,20 @@ MUTED      = "#565f89"
 WHITE      = "#e6f7ff"
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
-WIN_W, WIN_H   = 800, 560
-HOST_H         = 392   # swapped screen area
-LOG_H          = 136   # log panel
-STATUS_H       = 32    # status bar
-PX             = 3     # chunky border thickness
-BTN_SHADOW     = 4     # drop-shadow / press offset
+WIN_W, WIN_H         = 800, 560   # minimum client size
+DEFAULT_W, DEFAULT_H = 900, 640   # initial client size where the display allows it
+HOST_H               = 392        # screen area at the minimum window size
+LOG_H                = 136        # log panel
+STATUS_H             = 32         # status bar
+PX                   = 3         # chunky border thickness
+BTN_SHADOW           = 4         # drop-shadow / press offset
+
+
+def initial_window_size(screen_w: int, screen_h: int) -> tuple[int, int]:
+    """Initial client size, clamped to the display and the minimum window."""
+    width = min(DEFAULT_W, max(WIN_W, screen_w - 80))
+    height = min(DEFAULT_H, max(WIN_H, screen_h - 120))
+    return width, height
 
 FONT_CANDIDATES = (("Press Start 2P", 8), ("Fixedsys", 10), ("Terminal", 10))
 FONT_FALLBACK   = ("Consolas", 10)
@@ -406,8 +414,10 @@ class OrbifierApp:
             root.iconbitmap(str(base / "docs" / "orbifier.ico"))
         except Exception:
             pass  # icon is cosmetic; keep the Tk default if it cannot load
-        root.geometry(f"{WIN_W}x{WIN_H}")
-        root.resizable(False, False)
+        root.minsize(WIN_W, WIN_H)
+        width, height = initial_window_size(root.winfo_screenwidth(), root.winfo_screenheight())
+        root.geometry(f"{width}x{height}")
+        root.resizable(True, True)
         root.configure(bg=BG)
 
         self.faker = GameFaker()
@@ -537,12 +547,13 @@ class OrbifierApp:
     # ── layout ────────────────────────────────────────────────────────────────
     def _build_layout(self):
         self.host = tk.Frame(self.root, bg=BG, width=WIN_W, height=HOST_H)
-        self.host.pack(side="top", fill="x")
+        self.host.pack(side="top", fill="both", expand=True)
         self.host.pack_propagate(False)
 
         log_wrap = tk.Frame(self.root, bg=BG, width=WIN_W, height=LOG_H)
         log_wrap.pack(side="top", fill="x")
         log_wrap.pack_propagate(False)
+        self.log_wrap = log_wrap
         border = tk.Frame(log_wrap, bg=BORDER, padx=PX, pady=PX)
         border.pack(fill="both", expand=True, padx=12, pady=(0, 4))
         self.log_text = tk.Text(
@@ -559,6 +570,7 @@ class OrbifierApp:
         status = tk.Frame(self.root, bg=PANEL, height=STATUS_H)
         status.pack(side="bottom", fill="x")
         status.pack_propagate(False)
+        self.status_bar = status
         tk.Frame(status, bg=BORDER, height=PX).pack(side="top", fill="x")
         self.status_var = tk.StringVar(value="READY")
         tk.Label(status, textvariable=self.status_var, bg=PANEL, fg=CYAN,
