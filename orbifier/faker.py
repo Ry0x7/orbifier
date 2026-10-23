@@ -235,11 +235,25 @@ def _find_source_exe() -> Path:
     if _is_frozen():
         return Path(sys.executable)  # copy ourselves
 
-    # Source mode: prefer pythonw.exe (no console window)
-    pythonw = Path(sys.executable).parent / "pythonw.exe"
-    if pythonw.exists():
-        return pythonw
-    return Path(sys.executable)  # fallback to python.exe
+    # Source mode: prefer pythonw.exe (no console window). The Windows Store
+    # exposes app-execution aliases that exist but cannot be opened, so check
+    # readability and fall back to the real interpreter under base_prefix.
+    candidates = [
+        Path(sys.executable).parent / "pythonw.exe",
+        Path(sys.base_prefix) / "pythonw.exe",
+        Path(sys.executable),
+        Path(sys.base_prefix) / "python.exe",
+    ]
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            with candidate.open("rb"):
+                pass
+        except OSError:
+            continue
+        return candidate
+    return Path(sys.executable)
 
 
 class GameFaker:
