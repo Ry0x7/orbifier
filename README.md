@@ -54,7 +54,8 @@ Screenshots may predate this addition; the home grid now has six buttons.
 1. You pick a game on the Database screen (or type an exe name on Manual EXE), and select the desired timer duration.
 2. Orbifier copies itself (the frozen exe) or `pythonw.exe` (source run) into
    the selected **OUTPUT FOLDER** under the game's executable name, e.g. `hollow_knight.exe`.
-   Manual and Database screens share this folder selection; it defaults to `Desktop\Win64\`.
+   Manual and Database screens share this folder selection; it defaults to the
+   `OUTPUT_DIR` setting when set, otherwise `Desktop\<FAKE_EXE_DIR>\`.
    Use **BROWSE** or type a directory. The CLI also prompts for an optional output folder.
    On a source run, the copied interpreter's runtime DLLs and Tcl/Tk files live once in
    `_orbifier_runtime_<version>` inside that output folder, so a second game in the same
@@ -65,8 +66,14 @@ Screenshots may predate this addition; the home grid now has six buttons.
    Discord has to be running for detection to work.
 5. You can keep the keep-alive window open, minimize it, or click **HIDE TO TRAY** to tuck it into the notification area (Discord continues detection while in tray).
 6. ACTIVE QUESTS counts down in perfect sync with the keep-alive window. When time elapses:
-   - If **AUTO-CLOSE** is on (default), the process automatically terminates and Orbifier cleans up the `.exe` and empty directories.
-   - If off, STOP terminates the process and cleans up files on demand. STOP ALL stops every active quest.
+   - If **AUTO-CLOSE** is on (default), the process terminates; **AUTO-CLEAN**
+     removes the `.exe` and empty directories when it is on.
+   - If off, STOP terminates the process. STOP and STOP ALL respect **AUTO-CLEAN**;
+     when it is off, CLEAR dismisses a stopped row without deleting files.
+   - Explicit DELETE in the setup screens still removes the placeholder files.
+   - Closing the keep-alive window manually is also a stop; **AUTO-CLEAN** removes
+     files when it is on.
+   - Closing Orbifier stops active quests when **CLOSE_QUESTS_ON_EXIT** is on (default).
 
 The quest only progresses when the detected process maps to the quest's exact Discord
 application id. Several games share a name (there are multiple "Call of Duty" entries), so
@@ -139,14 +146,25 @@ For the EA SPORTS FC 27 instructions:
 This creates `steamapps\appmanifest_4080220.acf` and
 `steamapps\common\EA SPORTS FC 27\fc27.exe` without duplicating the game folder.
 
-Orbifier does **not** clean these up automatically. STOP removes the placeholder exe, but the
-`.acf` file remains until you delete it, and Steam may show the game as installed in
-the meantime. Empty game subfolders may be removed during cleanup; the selected
-output folder and the library's `common` directory are preserved.
+Orbifier does **not** remove the manifest automatically. STOP removes the placeholder exe
+when **AUTO_CLEAN** is on, but the `.acf` file remains until you delete it, and Steam may
+show the game as installed in the meantime. Empty game subfolders may be removed during
+cleanup; the selected output folder and the library's `common` directory are preserved.
+The SETTINGS auto-clean and close-on-exit options do not remove the appmanifest; use the
+Steam DELETE button for that.
 
 ## Settings
 
-Edit `settings.py` next to the app (source run) and restart.
+Open **SETTINGS** from the home screen to edit the timer, auto-close,
+auto-clean, close-on-exit, output-folder, and update-check defaults. Changes are
+saved to `%APPDATA%\Orbifier\settings.json` (or `~/.orbifier/settings.json`) and
+override `settings.py`; the bundled `settings.py` remains the fallback.
+**RESET** deletes the JSON file and restores the values from `settings.py` (the
+shipped defaults unless you edited that file). External edits to `settings.py`
+are picked up on the next launch when no JSON override exists. The CLI keeps its
+own output-folder and delete prompts; it honors `QUEST_MINUTES`, `AUTO_CLOSE`,
+and `CHECK_UPDATES`, and does not apply `AUTO_CLEAN`, `CLOSE_QUESTS_ON_EXIT`, or
+`OUTPUT_DIR`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -160,7 +178,10 @@ Edit `settings.py` next to the app (source run) and restart.
 | `MAX_SEARCH_RESULTS` | `50` | Maximum games listed per database search. |
 | `QUEST_MINUTES` | `20` | Default length of the ACTIVE QUESTS countdown per game. |
 | `AUTO_CLOSE` | `True` | Automatically close the fake game process when timer completes. |
-| `AUTO_CLEAN` | `True` | Automatically remove fake exe and empty directories on stop. |
+| `AUTO_CLEAN` | `True` | Remove fake exe and owned helper files after any stop (STOP, timer end, external close, or app exit when close-on-exit is on). |
+| `CLOSE_QUESTS_ON_EXIT` | `True` | Stop active fake quests when Orbifier closes. |
+| `OUTPUT_DIR` | `""` | Default GUI output folder; blank uses `Desktop\<FAKE_EXE_DIR>`. |
+| `CHECK_UPDATES` | `True` | Check for updates at startup in the GUI and CLI. |
 
 ## Build it yourself
 
@@ -188,7 +209,8 @@ orbifier/
   steam.py               Steam path, store search, appmanifest writer
   main.py                console menu
   ui.py                  console colours, banner, credits text
-  config.py              defaults merged with settings.py
+  config.py              defaults merged with settings.py and user settings
+  user_settings.py       %APPDATA% settings overrides and validation
   updater.py             release update check for the exe
   net.py, errors.py      HTTP helpers, error types
   __init__.py, __main__.py
