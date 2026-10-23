@@ -1366,7 +1366,7 @@ class OrbifierApp:
         self,
         exe_name: str,
         done_msg: str,
-        minutes: float = 15.0,
+        minutes: float = 20.0,
         auto_close: bool = True,
     ) -> None:
         """Shared by Database and Manual: copy to the selected folder and launch."""
@@ -1388,13 +1388,20 @@ class OrbifierApp:
             return path, proc
 
         def done(ok):
-            if ok:
-                path, proc = ok
-                self._track_quest(path, proc, duration_s=duration_s, auto_close=auto_close,
-                                  cleanup_root=output_dir)
-                self.log(done_msg, "ok")
-                self.log("[!] IMPORTANT: Discord MUST be running for the spoofing to work", "warn")
-                self.log("[*] Keep the process running or in tray until quest is complete", "info")
+            if not ok:
+                return
+            path, proc = ok
+            if not proc or proc.poll() is not None:
+                # launch_executable() already reported the reason. Remove the
+                # copied exe/helpers rather than leaving a dead setup behind.
+                faker.delete_fake_game(exe_name, output_dir=output_dir)
+                self.log(f"[!] {exe_name} did not start; no quest was tracked.", "warn")
+                return
+            self._track_quest(path, proc, duration_s=duration_s, auto_close=auto_close,
+                              cleanup_root=output_dir)
+            self.log(done_msg, "ok")
+            self.log("[!] IMPORTANT: Discord MUST be running for the spoofing to work", "warn")
+            self.log("[*] Keep the process running or in tray until quest is complete", "info")
 
         self.run_task(f"Creating {exe_name}", work, done)
 
@@ -1712,6 +1719,7 @@ class OrbifierApp:
         """Register a launched fake process in the ACTIVE QUESTS panels."""
         if not proc:
             return
+        parent = Path(exe_path).resolve().parent
         quest = self.quests.add(
             Path(exe_path).name,
             proc,
@@ -1720,7 +1728,7 @@ class OrbifierApp:
             auto_close=auto_close,
             cleanup_root=cleanup_root,
             cleanup_files=tuple(p for p in self.faker.created_helpers
-                                if p.parent == Path(exe_path).resolve().parent),
+                                if p.is_relative_to(parent)),
         )
         self._refresh_quests()
 

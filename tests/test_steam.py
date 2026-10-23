@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import pytest
-from orbifier import steam
+from orbifier import faker, steam
 
 from orbifier.steam import (
     _pick_windows_exe, sanitize_installdir, sanitize_executable, steam_fake_exe_path,
@@ -180,6 +180,12 @@ class TestCustomSteamSetup:
         fake_exe.write_bytes(b"placeholder")
         helper = fake_exe.parent / "_orbifier_timer.pyw"
         helper.write_text("timer")
+        runtime_files = faker._source_runtime_files()
+        for source in runtime_files:
+            (fake_exe.parent / source.name).write_bytes(b"runtime")
+        tcl_root = fake_exe.parent / "_orbifier_tcl"
+        (tcl_root / "tcl8.6").mkdir(parents=True)
+        (tcl_root / "tcl8.6" / "init.tcl").write_text("tcl")
 
         res = steam.delete_steam_game(tmp_path, 123, "GameDir", "game.exe")
         assert res["manifest"][1] is True
@@ -187,6 +193,8 @@ class TestCustomSteamSetup:
         assert not manifest.exists()
         assert not fake_exe.exists()
         assert not helper.exists()
+        assert not tcl_root.exists()
+        assert all(not (fake_exe.parent / source.name).exists() for source in runtime_files)
         assert not (tmp_path / "steamapps/common/GameDir").exists()
 
     def test_normalises_backslashes(self):

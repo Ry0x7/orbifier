@@ -178,6 +178,20 @@ class TestQuestTracker:
         assert not helper.exists()
         assert tmp_path.exists()
 
+    def test_owned_helper_directories_are_removed(self, tmp_path):
+        tracker, _clock = make_tracker()
+        helper_root = tmp_path / "_orbifier_tcl"
+        tcl_dir = helper_root / "tcl8.6"
+        tcl_dir.mkdir(parents=True)
+        (tcl_dir / "init.tcl").write_text("tcl library")
+        exe = tmp_path / "game.exe"
+        exe.write_bytes(b"placeholder")
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=tmp_path,
+                            cleanup_files=(helper_root, tcl_dir))
+        tracker.stop(quest)
+        assert not helper_root.exists()
+        assert not exe.exists()
+
     def test_tilde_output_folder_is_preserved(self, tmp_path, monkeypatch):
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setenv("HOME", str(tmp_path))

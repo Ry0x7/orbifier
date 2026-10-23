@@ -5,6 +5,7 @@ No tkinter here: the GUI renders whatever QuestTracker reports, and the
 tests drive it with a fake clock and fake process objects.
 """
 
+import shutil
 import subprocess
 import sys
 import time
@@ -33,7 +34,7 @@ class Quest:
     proc: Any                # anything with poll() / terminate() / kill() / wait()
     exe_path: Path | None
     started: float
-    duration: float = 900.0  # duration in seconds
+    duration: float = 1200.0  # duration in seconds
     auto_close: bool = True
     cleanup_root: Path | None = None
     cleanup_files: tuple[Path, ...] = ()
@@ -147,8 +148,13 @@ class QuestTracker:
                        for q in list(self.quests)):
                 for helper in quest.cleanup_files:
                     try:
-                        if Path(helper).resolve().parent == parent:
-                            Path(helper).unlink(missing_ok=True)
+                        helper_path = Path(helper)
+                        if not helper_path.is_relative_to(parent):
+                            continue
+                        if helper_path.is_dir():
+                            shutil.rmtree(helper_path, ignore_errors=True)
+                        else:
+                            helper_path.unlink(missing_ok=True)
                     except Exception:
                         pass
 

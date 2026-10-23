@@ -120,3 +120,31 @@ def test_manual_delete_removes_executable(app, tmp_path, monkeypatch):
 
     app.manual_delete()
     assert not target.exists()
+
+
+class _DeadProc:
+    def poll(self):
+        return 1
+
+
+@pytest.mark.parametrize("proc", [None, _DeadProc()], ids=["no-process", "dead-process"])
+def test_create_and_launch_requires_a_live_process(app, tmp_path, monkeypatch, proc):
+    target = tmp_path / "deadgame.exe"
+    target.write_bytes(b"x")
+    before = len(app.quests.quests)
+    sentinel = "SHOULD-NOT-LOG-SUCCESS"
+    cleaned = []
+
+    monkeypatch.setattr(app.faker, "create_fake_game", lambda *a, **k: target)
+    monkeypatch.setattr(app.faker, "launch_executable", lambda *a, **k: proc)
+    monkeypatch.setattr(app.faker, "delete_fake_game",
+                        lambda *a, **k: cleaned.append((a, k)) or {})
+    monkeypatch.setattr(app, "run_task", lambda label, fn, done, *a: done(fn()))
+
+    app._create_and_launch("deadgame.exe", sentinel, minutes=20)
+
+    log = app.log_text.get("1.0", "end")
+    assert sentinel not in log
+    assert "did not start; no quest was tracked" in log
+    assert len(app.quests.quests) == before
+    assert cleaned

@@ -6,8 +6,13 @@ from orbifier.ui import _NoColors, credits_text
 
 
 class FakePopen:
+    returncode = None
+
     def __init__(self, args, **kwargs):
         self.args = args
+
+    def poll(self):
+        return None
 
 
 def test_default_timer_is_twenty_minutes():

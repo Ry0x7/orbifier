@@ -80,8 +80,15 @@ def test_delete_fake_game(tmp_path, monkeypatch):
     target = instance.create_fake_game("Sub/game.exe", output_dir=out)
     assert target.exists()
     assert (out / "Sub/_orbifier_timer.pyw").exists()
+    runtime_helpers = [
+        path for path in instance.created_helpers
+        if path.parent == (out / "Sub").resolve()
+        and path.name not in ("_orbifier_timer.pyw", "pyvenv.cfg")
+    ]
 
     res = instance.delete_fake_game("Sub/game.exe", output_dir=out)
     assert res["executable"][1] is True
     assert not target.exists()
+    if runtime_helpers:
+        assert all(not path.exists() for path in runtime_helpers)
     assert not (out / "Sub").exists()
