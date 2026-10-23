@@ -25,3 +25,6 @@ MAX_SEARCH_RESULTS = 50
 QUEST_MINUTES = 20   # minutes the ACTIVE QUESTS countdown runs per game
 AUTO_CLOSE    = True # automatically close fake game when timer reaches 00:00
 AUTO_CLEAN    = True # automatically delete fake exe & directory after quest stops
+CLOSE_QUESTS_ON_EXIT = True  # stop active fake quests when Orbifier closes
+OUTPUT_DIR = ""              # blank = Desktop\<FAKE_EXE_DIR>
+CHECK_UPDATES = True         # check GitHub releases at startup

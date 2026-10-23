@@ -10,6 +10,8 @@ and are NOT exposed in settings.py.
 import importlib
 import sys
 
+from . import user_settings
+
 # ── Load user settings (root-level settings.py) ──────────────────────────────
 # This lets the user edit a single, visible file at the project root.
 try:
@@ -17,10 +19,17 @@ try:
 except ImportError:
     _user = None  # no user settings file – use all defaults
 
+# Values saved from the SETTINGS screen win over settings.py.
+_overrides: dict = user_settings.load_overrides()
+# The settings.py/default values, kept so RESET can restore them.
+_BASE: dict = {}
+
 
 def _get(name: str, default):
-    """Return a value from the user settings module, falling back to *default*."""
-    return getattr(_user, name, default)
+    """Return the stored override, else the settings.py value, else *default*."""
+    base = getattr(_user, name, default) if _user else default
+    _BASE[name] = base
+    return _overrides.get(name, base)
 
 
 # ── App identity ──────────────────────────────────────────────────────────────
@@ -72,3 +81,22 @@ MAX_SEARCH_RESULTS = _get("MAX_SEARCH_RESULTS", 50)
 QUEST_MINUTES      = _get("QUEST_MINUTES",      20)  # countdown shown in ACTIVE QUESTS
 AUTO_CLOSE         = _get("AUTO_CLOSE",         True)
 AUTO_CLEAN         = _get("AUTO_CLEAN",         True)
+CLOSE_QUESTS_ON_EXIT = _get("CLOSE_QUESTS_ON_EXIT", True)
+OUTPUT_DIR           = _get("OUTPUT_DIR",           "")  # blank = Desktop\<FAKE_EXE_DIR>
+CHECK_UPDATES        = _get("CHECK_UPDATES",        True)
+
+
+def apply_overrides(values: dict) -> None:
+    """Apply validated settings to the live module attributes."""
+    normalized = user_settings.validate(values)
+    for key, value in normalized.items():
+        globals()[key] = value
+        _overrides[key] = value
+
+
+def reset_overrides() -> None:
+    """Drop every override and restore the settings.py/default values."""
+    _overrides.clear()
+    for key in user_settings.SETTINGS_KEYS:
+        if key in _BASE:
+            globals()[key] = _BASE[key]

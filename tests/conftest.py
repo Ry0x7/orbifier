@@ -5,11 +5,29 @@ after the first one is destroyed, so every GUI test module shares one
 session-scoped root while still getting a fresh OrbifierApp per module.
 """
 import os
+import tempfile
 import tkinter as tk
+from pathlib import Path
 
 import pytest
 
-from orbifier import gui, ui
+# The settings path has to be set before Orbifier imports config, and it must
+# never point at the real profile's settings file.
+_TEST_SETTINGS = Path(tempfile.gettempdir()) / f"orbifier-test-settings-{os.getpid()}.json"
+_TEST_SETTINGS.unlink(missing_ok=True)
+os.environ["ORBIFIER_SETTINGS"] = str(_TEST_SETTINGS)
+
+from orbifier import config, gui, ui
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_settings():
+    """Start and end every test from the bundled settings.py defaults."""
+    config.reset_overrides()
+    _TEST_SETTINGS.unlink(missing_ok=True)
+    yield
+    config.reset_overrides()
+    _TEST_SETTINGS.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="session")
