@@ -9,6 +9,12 @@ def app(gui_app):
     return gui_app
 
 
+class _LiveProc:
+    """Stand-in for a launched fake process that is still running."""
+    def poll(self):
+        return None
+
+
 @pytest.mark.parametrize("width", [gui.WIN_W, gui.DEFAULT_W])
 def test_changed_screens_fit_window(app, width):
     for name in ("manual", "database", "steam"):
@@ -67,15 +73,78 @@ def test_steam_create_overwrites_existing_manifest_and_exe(app, tmp_path, monkey
 
     monkeypatch.setattr(app, "run_task", lambda label, fn, done, *a: done(fn()))
     monkeypatch.setattr(gui.steam, "fetch_steam_app_info", lambda appid: None)
-    monkeypatch.setattr(app.faker, "launch_executable", lambda path, **kw: None)
+    # A launch that succeeds must not roll the setup back, so return a live proc.
+    monkeypatch.setattr(app.faker, "launch_executable", lambda path, **kw: _LiveProc())
     confirmations = []
     monkeypatch.setattr(gui.messagebox, "askyesno",
                         lambda title, text, **kw: confirmations.append(text) or True)
 
+    before = len(app.quests.quests)
     app.steam_create()
-    assert len(confirmations) == 1
-    assert "overwritten" in confirmations[0]
-    assert "AppState" in acf.read_text()
+    try:
+        assert len(confirmations) == 1
+        assert "overwritten" in confirmations[0]
+        assert "AppState" in acf.read_text()
+        assert exe.exists()
+    finally:
+        for quest in app.quests.quests[before:]:
+            app.quests.remove(quest)
+
+
+def test_steam_failed_launch_removes_created_setup(app, tmp_path, monkeypatch):
+    steamapps = tmp_path / "steamapps"
+    steamapps.mkdir(parents=True)
+
+    app.steam_path.delete(0, "end")
+    app.steam_path.insert(0, str(steamapps))
+    app.steam_query.delete(0, "end")
+    app.steam_query.insert(0, "4080220")
+    app.steam_search()
+    app.steam_install.delete(0, "end")
+    app.steam_install.insert(0, "EA SPORTS FC 27")
+    app.steam_override.delete(0, "end")
+    app.steam_override.insert(0, r"..\EA SPORTS FC 27\fc27.exe")
+
+    monkeypatch.setattr(app, "run_task", lambda label, fn, done, *a: done(fn()))
+    monkeypatch.setattr(gui.steam, "fetch_steam_app_info", lambda appid: None)
+    monkeypatch.setattr(app.faker, "launch_executable", lambda path, **kw: None)
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **kw: True)
+
+    before = len(app.quests.quests)
+    app.steam_create()
+
+    acf = steamapps / "appmanifest_4080220.acf"
+    exe = steamapps / "common/EA SPORTS FC 27/fc27.exe"
+    log = app.log_text.get("1.0", "end")
+    assert not acf.exists()
+    assert not exe.exists()
+    assert not (steamapps / "common/EA SPORTS FC 27").exists()
+    assert "did not start" in log
+    assert len(app.quests.quests) == before
+
+
+def test_track_quest_passes_only_direct_helpers(app, tmp_path):
+    previous_output = app.output_directory.get()
+    app.output_directory.set(str(tmp_path))
+    try:
+        top = app.faker.create_fake_game("top.exe", output_dir=tmp_path)
+        nested = app.faker.create_fake_game("Sub/nested.exe", output_dir=tmp_path)
+        assert top is not None and nested is not None
+
+        before = len(app.quests.quests)
+        app._track_quest(top, _LiveProc(), duration_s=60, cleanup_root=tmp_path)
+        try:
+            quest = app.quests.quests[-1]
+            assert len(app.quests.quests) == before + 1
+            assert quest.cleanup_files
+            parent = top.resolve().parent
+            assert all(path.parent == parent for path in quest.cleanup_files)
+            assert not any("Sub" in path.parts for path in quest.cleanup_files)
+        finally:
+            for quest in app.quests.quests[before:]:
+                app.quests.remove(quest)
+    finally:
+        app.output_directory.set(previous_output)
 
 
 def test_steam_delete_removes_setup(app, tmp_path, monkeypatch):

@@ -56,6 +56,10 @@ Screenshots may predate this addition; the home grid now has six buttons.
    the selected **OUTPUT FOLDER** under the game's executable name, e.g. `hollow_knight.exe`.
    Manual and Database screens share this folder selection; it defaults to `Desktop\Win64\`.
    Use **BROWSE** or type a directory. The CLI also prompts for an optional output folder.
+   On a source run, the copied interpreter's runtime DLLs and Tcl/Tk files live once in
+   `_orbifier_runtime_<version>` inside that output folder, so a second game in the same
+   folder reuses it instead of copying again. That folder is removed once the last fake
+   game in it is deleted, and files that were already there are left alone.
 3. It launches that copy with a compact keep-alive window displaying the active game title and countdown timer.
 4. Discord scans running top-level windows, detects the game process name, and treats the game as actively played.
    Discord has to be running for detection to work.

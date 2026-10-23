@@ -1610,12 +1610,18 @@ class OrbifierApp:
             )
 
         def done(proc):
-            if proc:
-                self._track_quest(fake_exe_path, proc, duration_s=duration_s, auto_close=auto_close,
-                                  cleanup_root=steam.steamapps_path(steam_path) / "common")
-                self.log("[OK] Steam Quest setup complete!", "ok")
-                self.log("[!] Discord MUST be running for detection to work.", "warn")
-                self.log("[*] Keep the process running or in tray until the quest is done.", "info")
+            if not proc:
+                # launch_executable() already reported the reason. Roll the
+                # created setup back so a dead copy does not linger.
+                steam.delete_steam_game(steam_path, appid, info["installdir"],
+                                        info["executable"])
+                self.log(f"[!] {info['name']} did not start; setup removed.", "warn")
+                return
+            self._track_quest(fake_exe_path, proc, duration_s=duration_s, auto_close=auto_close,
+                              cleanup_root=steam.steamapps_path(steam_path) / "common")
+            self.log("[OK] Steam Quest setup complete!", "ok")
+            self.log("[!] Discord MUST be running for detection to work.", "warn")
+            self.log("[*] Keep the process running or in tray until the quest is done.", "info")
 
         self.run_task("Writing appmanifest + exe", work, done)
 
@@ -1727,8 +1733,10 @@ class OrbifierApp:
             duration_s=duration_s,
             auto_close=auto_close,
             cleanup_root=cleanup_root,
+            # Only this quest's own folder: nested folders belong to other
+            # quests and their helpers must survive this cleanup.
             cleanup_files=tuple(p for p in self.faker.created_helpers
-                                if p.is_relative_to(parent)),
+                                if p.parent == parent),
         )
         self._refresh_quests()
 

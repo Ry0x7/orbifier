@@ -79,16 +79,66 @@ def test_delete_fake_game(tmp_path, monkeypatch):
     out = tmp_path / "output"
     target = instance.create_fake_game("Sub/game.exe", output_dir=out)
     assert target.exists()
-    assert (out / "Sub/_orbifier_timer.pyw").exists()
-    runtime_helpers = [
-        path for path in instance.created_helpers
-        if path.parent == (out / "Sub").resolve()
-        and path.name not in ("_orbifier_timer.pyw", "pyvenv.cfg")
-    ]
+    folder = out / "Sub"
+    assert (folder / "_orbifier_timer.pyw").exists()
+    runtime_dir = faker._source_runtime_dir(folder)
+    assert runtime_dir.is_dir()
+    assert runtime_dir.resolve() in instance.created_helpers
 
     res = instance.delete_fake_game("Sub/game.exe", output_dir=out)
     assert res["executable"][1] is True
     assert not target.exists()
-    if runtime_helpers:
-        assert all(not path.exists() for path in runtime_helpers)
-    assert not (out / "Sub").exists()
+    assert not runtime_dir.exists()
+    assert runtime_dir not in instance.created_helpers
+    assert not folder.exists()
+
+
+def test_delete_keeps_shared_runtime_while_another_fake_remains(tmp_path, monkeypatch):
+    source = tmp_path / "source.exe"
+    source.write_bytes(b"placeholder")
+    monkeypatch.setattr(faker, "_find_source_exe", lambda: source)
+    monkeypatch.setattr(faker, "_is_frozen", lambda: False)
+    instance = faker.GameFaker()
+    out = tmp_path / "output"
+    first = instance.create_fake_game("GameA.exe", output_dir=out)
+    second = instance.create_fake_game("GameB.exe", output_dir=out)
+    runtime_dir = faker._source_runtime_dir(out)
+    assert runtime_dir.is_dir()
+    assert first.exists() and second.exists()
+
+    instance.delete_fake_game("GameA.exe", output_dir=out)
+    assert not first.exists()
+    assert second.exists()
+    # The runtime folder is shared and may still be loaded by B's process.
+    assert runtime_dir.is_dir()
+
+    res = instance.delete_fake_game("GameB.exe", output_dir=out)
+    assert res["executable"][1] is True
+    assert not second.exists()
+    assert not runtime_dir.exists()
+    # The user-chosen output folder is kept, but nothing of the app is left.
+    assert out.is_dir()
+    assert not list(out.iterdir())
+
+
+def test_delete_preserves_loose_user_runtime_files(tmp_path, monkeypatch):
+    source = tmp_path / "source.exe"
+    source.write_bytes(b"placeholder")
+    monkeypatch.setattr(faker, "_find_source_exe", lambda: source)
+    monkeypatch.setattr(faker, "_is_frozen", lambda: False)
+    instance = faker.GameFaker()
+    out = tmp_path / "output"
+    out.mkdir()
+    sentinels = {}
+    for name in ("python3.dll", "zlib1.dll"):
+        sentinel = out / name
+        sentinel.write_bytes(b"user file")
+        sentinels[sentinel] = sentinel.read_bytes()
+
+    instance.create_fake_game("game.exe", output_dir=out)
+    res = instance.delete_fake_game("game.exe", output_dir=out)
+
+    assert res["executable"][1] is True
+    for sentinel, content in sentinels.items():
+        assert sentinel.exists()
+        assert sentinel.read_bytes() == content

@@ -346,27 +346,10 @@ def delete_steam_game(steam_path: Path, appid: int, installdir: str, executable:
 
         parent = fake_exe.parent
         try:
-            from .faker import _is_frozen, _source_runtime_files
-            runtime_names = ([] if _is_frozen()
-                             else [path.name for path in _source_runtime_files()])
+            from .faker import remove_owned_helpers
+            results["helpers"].extend(remove_owned_helpers(parent))
         except Exception:
-            runtime_names = []
-        for helper_name in ("_orbifier_timer.pyw", "pyvenv.cfg", *runtime_names):
-            h = parent / helper_name
-            if h.exists() and h.is_file():
-                try:
-                    h.unlink()
-                    results["helpers"].append(h)
-                except Exception:
-                    pass
-
-        tcl_root = parent / "_orbifier_tcl"
-        if tcl_root.exists() and tcl_root.is_dir():
-            try:
-                shutil.rmtree(tcl_root)
-                results["helpers"].append(tcl_root)
-            except Exception:
-                pass
+            pass
 
         # 3. Clean up empty install dir and parent dirs up to steamapps/common
         common_dir = steamapps_path(steam_path) / "common"

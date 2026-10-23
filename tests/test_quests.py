@@ -1,4 +1,5 @@
 """Tests for quests.py – QuestTracker logic with a fake clock and fake processes."""
+import sys
 from pathlib import Path
 
 from orbifier.quests import (
@@ -203,3 +204,59 @@ class TestQuestTracker:
         quest = tracker.add("Game", FakeProc(), exe, cleanup_root=Path("~/selected"))
         tracker.stop(quest)
         assert output.is_dir()
+
+    def test_cleanup_removes_only_direct_helpers(self, tmp_path):
+        tracker, _clock = make_tracker()
+        sub = tmp_path / "Sub"
+        sub.mkdir()
+        exe = sub / "game.exe"
+        exe.write_bytes(b"placeholder")
+        direct = sub / "_orbifier_timer.pyw"
+        direct.write_text("owned helper")
+        outside = tmp_path / "_orbifier_timer.pyw"
+        outside.write_text("other quest's helper")
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=tmp_path,
+                            cleanup_files=(direct, outside))
+        tracker.stop(quest)
+        assert not direct.exists()
+        assert outside.read_text() == "other quest's helper"
+
+    def test_outer_quest_cleanup_preserves_nested_live_quest_helpers(self, tmp_path):
+        tracker, _clock = make_tracker()
+        outer_exe = tmp_path / "game.exe"
+        outer_exe.write_bytes(b"placeholder")
+        outer_helper = tmp_path / "_orbifier_timer.pyw"
+        outer_helper.write_text("outer helper")
+
+        nested_dir = tmp_path / "Sub"
+        nested_dir.mkdir()
+        nested_exe = nested_dir / "nested.exe"
+        nested_exe.write_bytes(b"placeholder")
+        nested_helper = nested_dir / "_orbifier_timer.pyw"
+        nested_helper.write_text("nested helper")
+
+        outer = tracker.add("Outer", FakeProc(), outer_exe, cleanup_root=tmp_path,
+                            cleanup_files=(outer_helper,))
+        nested = tracker.add("Nested", FakeProc(), nested_exe, cleanup_root=tmp_path,
+                             cleanup_files=(nested_helper,))
+
+        tracker.stop(outer)
+        assert not outer_helper.exists()
+        assert nested_helper.read_text() == "nested helper"
+        assert nested_exe.exists()
+        assert nested in tracker.quests
+
+    def test_shared_runtime_directory_is_removed_after_last_quest(self, tmp_path):
+        tracker, _clock = make_tracker()
+        exe = tmp_path / "game.exe"
+        exe.write_bytes(b"placeholder")
+        runtime_dir = tmp_path / "_orbifier_runtime_{}{}".format(
+            sys.version_info.major, sys.version_info.minor)
+        runtime_dir.mkdir()
+        (runtime_dir / "python3.dll").write_bytes(b"runtime")
+        (runtime_dir / ".orbifier-runtime").write_text("orbifier runtime")
+        quest = tracker.add("Game", FakeProc(), exe, cleanup_root=tmp_path,
+                            cleanup_files=(runtime_dir,))
+        tracker.stop(quest)
+        assert not runtime_dir.exists()
+        assert not exe.exists()

@@ -1,5 +1,7 @@
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -120,3 +122,168 @@ def test_launch_reports_failure_when_process_exits_immediately(tmp_path, monkeyp
     monkeypatch.setattr(faker, "print_color", lambda *a, **k: None)
 
     assert faker.GameFaker().launch_executable(exe) is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows source-copy check")
+def test_second_source_copy_reuses_runtime_without_copying(tmp_path, monkeypatch):
+    """A second fake must not rewrite the DLLs a running first fake loaded.
+
+    This is the WinError 32 regression: the copied runtime used to sit beside
+    the exe, so the second copy tried to overwrite locked files.
+    """
+    instance = faker.GameFaker()
+    first = tmp_path / "First.exe"
+    instance.copy_exe_to(first)
+
+    runtime_dir = faker._source_runtime_dir(tmp_path)
+    assert runtime_dir.is_dir()
+
+    handles = []
+    writes = []
+    try:
+        for path in sorted(runtime_dir.iterdir()):
+            if path.is_file():
+                handles.append(path.open("rb"))
+
+        original = faker.shutil.copy2
+
+        def spy(source, destination, *args, **kwargs):
+            writes.append(Path(destination))
+            return original(source, destination, *args, **kwargs)
+
+        monkeypatch.setattr(faker.shutil, "copy2", spy)
+
+        second = tmp_path / "Second.exe"
+        instance.copy_exe_to(second)
+    finally:
+        for handle in handles:
+            handle.close()
+
+    assert second.is_file()
+    assert not any(runtime_dir in Path(write).parents for write in writes)
+    assert faker._runtime_dir_ready(runtime_dir)
+
+
+def _write_probe(path: Path) -> Path:
+    path.write_text(
+        "import pathlib\n"
+        "import sys\n"
+        "import time\n"
+        "import tkinter\n"
+        "root = tkinter.Tk()\n"
+        "root.withdraw()\n"
+        "root.update()\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(tkinter.TkVersion), encoding='utf-8')\n"
+        "time.sleep(float(sys.argv[2]))\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows source-copy check")
+def test_copied_source_runtime_supports_two_live_fakes(tmp_path):
+    pytest.importorskip("tkinter")
+    if faker._source_runtime_problem() is not None:
+        pytest.skip("source mode cannot build a runnable copy on this install")
+
+    instance = faker.GameFaker()
+    first = tmp_path / "First.exe"
+    instance.copy_exe_to(first)
+    probe = _write_probe(tmp_path / "probe.pyw")
+    first_marker = tmp_path / "first.txt"
+
+    first_proc = subprocess.Popen(
+        [str(first), str(probe), str(first_marker), "30"],
+        env=faker._source_launch_env(first),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not first_marker.exists():
+            if first_proc.poll() is not None:
+                pytest.fail(f"first fake exited early with code {first_proc.returncode}")
+            time.sleep(0.1)
+        assert first_marker.exists(), "first fake never imported tkinter"
+
+        # The first fake is alive and holds its runtime DLLs open.
+        second = tmp_path / "Second.exe"
+        instance.copy_exe_to(second)
+        second_marker = tmp_path / "second.txt"
+        result = subprocess.run(
+            [str(second), str(probe), str(second_marker), "0"],
+            env=faker._source_launch_env(second),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.returncode
+        assert float(second_marker.read_text(encoding="utf-8")) >= 8.0
+    finally:
+        first_proc.terminate()
+        try:
+            first_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            first_proc.kill()
+            first_proc.wait(timeout=10)
+
+
+def test_conflicting_runtime_file_fails_with_actionable_error(tmp_path):
+    sources = faker._source_runtime_files()
+    if not sources:
+        pytest.skip("no runtime files to conflict with on this platform")
+
+    runtime_dir = faker._source_runtime_dir(tmp_path)
+    runtime_dir.mkdir()
+    source = sources[0]
+    (runtime_dir / source.name).write_bytes(
+        b"" if source.stat().st_size else b"x"
+    )
+
+    target = tmp_path / "Game.exe"
+    with pytest.raises(RuntimeError) as caught:
+        faker.GameFaker().copy_exe_to(target)
+
+    assert str(runtime_dir) in str(caught.value)
+    assert not target.exists()
+    assert not list(tmp_path.glob("*.orbifier-tmp"))
+
+
+def test_failed_exe_copy_removes_staged_file_and_runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(faker, "_source_runtime_problem", lambda: None)
+    monkeypatch.setattr(faker, "_source_runtime_files", lambda: [])
+    monkeypatch.setattr(faker, "_source_tcl_dirs", lambda: (None, None))
+
+    def failing_copy(source, destination, *args, **kwargs):
+        raise PermissionError(13, "Access is denied", str(destination))
+
+    monkeypatch.setattr(faker.shutil, "copy2", failing_copy)
+
+    target = tmp_path / "Game.exe"
+    with pytest.raises(RuntimeError) as caught:
+        faker.GameFaker().copy_exe_to(target)
+
+    assert "Could not create Game.exe" in str(caught.value)
+    assert not target.exists()
+    assert not list(tmp_path.glob("*.orbifier-tmp"))
+    assert not faker._source_runtime_dir(tmp_path).exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows launch environment check")
+def test_launch_env_searches_shared_runtime_dir(tmp_path):
+    runtime_dir = faker._source_runtime_dir(tmp_path)
+    tcl_dir = runtime_dir / faker.TCL_HELPER_DIR / "tcl8.6"
+    tk_dir = runtime_dir / faker.TCL_HELPER_DIR / "tk8.6"
+    tcl_dir.mkdir(parents=True)
+    tk_dir.mkdir(parents=True)
+    (runtime_dir / faker.RUNTIME_MARKER).write_text("ok", encoding="utf-8")
+    exe = tmp_path / "Game.exe"
+    exe.write_bytes(b"x")
+
+    env = faker._source_launch_env(exe)
+
+    assert env is not None
+    assert env["PATH"].split(os.pathsep)[0] == str(runtime_dir)
+    assert env["PYTHONPATH"] == str(runtime_dir)
+    assert env["TCL_LIBRARY"] == str(tcl_dir)
+    assert env["TK_LIBRARY"] == str(tk_dir)

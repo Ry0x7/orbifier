@@ -173,29 +173,74 @@ class TestCustomSteamSetup:
         assert '"appid"\t\t"123"' in path.read_text()
         assert "existing installation" not in path.read_text()
 
+    @staticmethod
+    def _write_source_helpers(fake_exe):
+        """Write the shared runtime folder and helper files for a fake exe."""
+        runtime_dir = faker._source_runtime_dir(fake_exe.parent)
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        (runtime_dir / "python3.dll").write_bytes(b"runtime")
+        (runtime_dir / faker.RUNTIME_MARKER).write_text("orbifier runtime\n")
+        timer = fake_exe.parent / faker.TIMER_SCRIPT
+        timer.write_text(faker._TIMER_PYW_CODE, encoding="utf-8")
+        cfg_text = faker._source_pyvenv_text()
+        assert cfg_text is not None
+        cfg = fake_exe.parent / faker.PYVENV_CFG
+        cfg.write_text(cfg_text, encoding="utf-8")
+        return runtime_dir, timer, cfg
+
     def test_delete_steam_game(self, tmp_path):
         manifest = steam.generate_appmanifest(123, "Game", "GameDir", tmp_path)
         fake_exe = tmp_path / "steamapps/common/GameDir/game.exe"
         fake_exe.parent.mkdir(parents=True, exist_ok=True)
         fake_exe.write_bytes(b"placeholder")
-        helper = fake_exe.parent / "_orbifier_timer.pyw"
-        helper.write_text("timer")
-        runtime_files = faker._source_runtime_files()
-        for source in runtime_files:
-            (fake_exe.parent / source.name).write_bytes(b"runtime")
-        tcl_root = fake_exe.parent / "_orbifier_tcl"
-        (tcl_root / "tcl8.6").mkdir(parents=True)
-        (tcl_root / "tcl8.6" / "init.tcl").write_text("tcl")
+        runtime_dir, timer, cfg = self._write_source_helpers(fake_exe)
 
         res = steam.delete_steam_game(tmp_path, 123, "GameDir", "game.exe")
         assert res["manifest"][1] is True
         assert res["executable"][1] is True
         assert not manifest.exists()
         assert not fake_exe.exists()
-        assert not helper.exists()
-        assert not tcl_root.exists()
-        assert all(not (fake_exe.parent / source.name).exists() for source in runtime_files)
+        assert not timer.exists()
+        assert not cfg.exists()
+        assert not runtime_dir.exists()
         assert not (tmp_path / "steamapps/common/GameDir").exists()
+
+    def test_delete_keeps_runtime_while_another_fake_remains(self, tmp_path):
+        steam.generate_appmanifest(123, "Game", "GameDir", tmp_path)
+        fake_exe = tmp_path / "steamapps/common/GameDir/game.exe"
+        fake_exe.parent.mkdir(parents=True, exist_ok=True)
+        fake_exe.write_bytes(b"placeholder")
+        runtime_dir, timer, cfg = self._write_source_helpers(fake_exe)
+        other = fake_exe.parent / "other.exe"
+        other.write_bytes(b"another fake")
+
+        res = steam.delete_steam_game(tmp_path, 123, "GameDir", "game.exe")
+
+        assert res["executable"][1] is True
+        assert not fake_exe.exists()
+        assert other.exists()
+        assert runtime_dir.is_dir()
+        assert (runtime_dir / "python3.dll").exists()
+        assert not timer.exists()
+        assert not cfg.exists()
+
+    def test_delete_preserves_loose_user_runtime_files(self, tmp_path):
+        steam.generate_appmanifest(123, "Game", "GameDir", tmp_path)
+        fake_exe = tmp_path / "steamapps/common/GameDir/game.exe"
+        fake_exe.parent.mkdir(parents=True, exist_ok=True)
+        fake_exe.write_bytes(b"placeholder")
+        loose = [fake_exe.parent / "python3.dll", fake_exe.parent / "zlib1.dll"]
+        for path in loose:
+            path.write_bytes(b"user runtime")
+        user_timer = fake_exe.parent / faker.TIMER_SCRIPT
+        user_timer.write_text("unrelated user file", encoding="utf-8")
+
+        res = steam.delete_steam_game(tmp_path, 123, "GameDir", "game.exe")
+
+        assert res["executable"][1] is True
+        assert not fake_exe.exists()
+        assert all(path.exists() for path in loose)
+        assert user_timer.read_text(encoding="utf-8") == "unrelated user file"
 
     def test_normalises_backslashes(self):
         launch = {

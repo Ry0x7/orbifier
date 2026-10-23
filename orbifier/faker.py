@@ -2,7 +2,9 @@
 faker.py – GameFaker class, manual_mode, and executable launching.
 
 In frozen (.exe) mode:   copies orbifier.exe itself → GameName.exe (--timer-mode)
-In source mode:           copies pythonw.exe → GameName.exe + _orbifier_timer.pyw
+In source mode:           copies pythonw.exe → GameName.exe + _orbifier_timer.pyw,
+                          plus one shared _orbifier_runtime_<ver> folder per
+                          output folder that holds the DLLs and Tcl/Tk data.
 """
 
 import os
@@ -349,28 +351,205 @@ def _source_runtime_problem() -> str | None:
     return None
 
 
+RUNTIME_DIR_PREFIX = "_orbifier_runtime_"
+RUNTIME_MARKER = ".orbifier-runtime"
+TCL_HELPER_DIR = "_orbifier_tcl"
+TIMER_SCRIPT = "_orbifier_timer.pyw"
+PYVENV_CFG = "pyvenv.cfg"
+
+
+def _source_runtime_dir(parent: Path) -> Path:
+    """Shared, versioned runtime folder used by every fake in *parent*."""
+    version = f"{sys.version_info.major}{sys.version_info.minor}"
+    return Path(parent) / f"{RUNTIME_DIR_PREFIX}{version}"
+
+
+def _runtime_dir_ready(runtime_dir: Path) -> bool:
+    """True once a runtime folder holds a complete, reusable copy."""
+    return (Path(runtime_dir) / RUNTIME_MARKER).is_file()
+
+
+def _local_tcl_dirs(runtime_dir: Path) -> tuple[Path | None, Path | None]:
+    """Locate the Tcl/Tk script libraries inside a copied runtime folder."""
+    root = Path(runtime_dir) / TCL_HELPER_DIR
+
+    def newest(prefix: str) -> Path | None:
+        candidates = []
+        for path in root.glob(f"{prefix}*"):
+            key = _version_key(path.name, prefix)
+            if key is not None and path.is_dir():
+                candidates.append((key, path))
+        return max(candidates, default=(None, None), key=lambda item: item[0])[1]
+
+    return newest("tcl"), newest("tk")
+
+
+def _source_pyvenv_text() -> str | None:
+    """The pyvenv.cfg content a copied interpreter needs beside the fake exe."""
+    for candidate in (
+        Path(sys.executable).parent.parent / PYVENV_CFG,
+        Path(sys.executable).parent / PYVENV_CFG,
+    ):
+        if candidate.is_file():
+            try:
+                return candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                break
+    # A Windows Store base install has no config next to it, so synthesize
+    # the same ``home`` pointer the real venv config would contain.
+    return f"home = {sys.base_prefix}\n"
+
+
+def _ensure_source_runtime(parent: Path) -> list[Path]:
+    """Create or reuse the shared runtime folder inside *parent*.
+
+    A second fake in the same folder must not rewrite files that the first
+    fake's process has loaded: Windows locks them, and copying over them fails
+    with ``WinError 32``. The folder therefore carries a marker written only
+    after a complete copy; when it is present nothing is touched. Individual
+    files that already match the source by size are reused too, so an
+    interrupted copy can be finished without overwriting a live DLL.
+
+    Returns the paths this call created.
+    """
+    runtime_dir = _source_runtime_dir(parent)
+    if _runtime_dir_ready(runtime_dir):
+        return []
+
+    created: list[Path] = []
+    if not runtime_dir.exists():
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        created.append(runtime_dir)
+
+    for source in _source_runtime_files():
+        destination = runtime_dir / source.name
+        if destination.exists():
+            try:
+                if destination.stat().st_size == source.stat().st_size:
+                    continue
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"{destination} does not match this Python installation. "
+                f"Close any running fake game, delete {runtime_dir}, and try again."
+            )
+        shutil.copy2(source, destination)
+        created.append(destination)
+
+    tcl_dir, tk_dir = _source_tcl_dirs()
+    if tcl_dir is not None and tk_dir is not None:
+        helper_root = runtime_dir / TCL_HELPER_DIR
+        for source_dir in (tcl_dir, tk_dir):
+            destination_dir = helper_root / source_dir.name
+            if destination_dir.is_dir():
+                continue
+            shutil.copytree(source_dir, destination_dir)
+            created.append(destination_dir)
+
+    marker = runtime_dir / RUNTIME_MARKER
+    marker.write_text(
+        f"orbifier runtime {sys.version_info.major}.{sys.version_info.minor}\n",
+        encoding="utf-8",
+    )
+    created.append(marker)
+    return created
+
+
+def _remove_created(paths: list[Path]) -> None:
+    """Undo the files a failed copy created, leaving earlier fakes alone."""
+    for path in reversed(paths):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _is_owned_helper(path: Path) -> bool:
+    """True when *path* is a helper file this app writes, not a user file."""
+    try:
+        if path.name.lower() == TIMER_SCRIPT:
+            return path.read_text(encoding="utf-8", errors="replace") == _TIMER_PYW_CODE
+        if path.name.lower() == PYVENV_CFG:
+            expected = _source_pyvenv_text()
+            return (expected is not None
+                    and path.read_text(encoding="utf-8", errors="replace") == expected)
+    except OSError:
+        return False
+    return False
+
+
+def _other_exe_remains(parent: Path) -> bool:
+    """True if *parent* still holds any fake-game executable."""
+    try:
+        return any(path.is_file() and path.suffix.lower() == ".exe"
+                   for path in Path(parent).iterdir())
+    except OSError:
+        return True
+
+
+def remove_owned_helpers(parent: Path, tracked: set[Path] | None = None) -> list[Path]:
+    """Delete the helper files and runtime folder this app owns in *parent*.
+
+    Loose runtime DLLs lying beside an exe are never touched: older builds put
+    them there, and they may just as well be the user's own files. The shared
+    runtime folder is only removed once no fake exe is left in the folder.
+    """
+    parent = Path(parent)
+    tracked = {Path(path) for path in tracked or ()}
+    removed: list[Path] = []
+
+    for name in (TIMER_SCRIPT, PYVENV_CFG):
+        candidate = parent / name
+        if not candidate.is_file():
+            continue
+        if candidate.resolve() not in tracked and not _is_owned_helper(candidate):
+            continue
+        try:
+            candidate.unlink()
+            removed.append(candidate)
+        except OSError:
+            pass
+
+    if _other_exe_remains(parent):
+        return removed
+
+    for runtime_dir in sorted(parent.glob(f"{RUNTIME_DIR_PREFIX}*")):
+        if not runtime_dir.is_dir():
+            continue
+        try:
+            shutil.rmtree(runtime_dir)
+            removed.append(runtime_dir)
+        except OSError:
+            pass
+    return removed
+
+
 def _source_launch_env(exe_path: Path | None = None) -> dict[str, str] | None:
-    """Environment that points the copied timer at its Tcl/Tk data."""
+    """Environment that points the copied timer at its runtime and Tcl data."""
     if sys.platform != "win32":
         return None
 
+    env = os.environ.copy()
     tcl_dir, tk_dir = _source_tcl_dirs()
     if exe_path is not None:
-        # Prefer the copy beside the fake exe: Windows Store installs live in
-        # WindowsApps, where Tcl cannot read its script library from a process
-        # that is not the packaged interpreter.
-        local_root = Path(exe_path).parent / "_orbifier_tcl"
-        local_tcl = local_root / tcl_dir.name if tcl_dir is not None else None
-        local_tk = local_root / tk_dir.name if tk_dir is not None else None
-        if local_tcl is not None and local_tk is not None \
-                and local_tcl.is_dir() and local_tk.is_dir():
-            tcl_dir, tk_dir = local_tcl, local_tk
+        runtime_dir = _source_runtime_dir(Path(exe_path).parent)
+        if runtime_dir.is_dir():
+            # The copied interpreter keeps its DLLs in the shared runtime
+            # folder, so the child's loader has to search there.
+            env["PATH"] = str(runtime_dir) + os.pathsep + env.get("PATH", "")
+            env["PYTHONPATH"] = str(runtime_dir)
+            # Windows Store installs keep Tcl inside WindowsApps, which the
+            # copied process cannot read; the local copy is preferred.
+            local_tcl, local_tk = _local_tcl_dirs(runtime_dir)
+            if local_tcl is not None and local_tk is not None:
+                tcl_dir, tk_dir = local_tcl, local_tk
 
-    if tcl_dir is None or tk_dir is None:
-        return None
-    env = os.environ.copy()
-    env["TCL_LIBRARY"] = str(tcl_dir)
-    env["TK_LIBRARY"] = str(tk_dir)
+    if tcl_dir is not None and tk_dir is not None:
+        env["TCL_LIBRARY"] = str(tcl_dir)
+        env["TK_LIBRARY"] = str(tk_dir)
     return env
 
 
@@ -385,74 +564,71 @@ class GameFaker:
         self.desktop_path = Path.home() / "Desktop"
         self.created_helpers: set[Path] = set()
 
-    def copy_exe_to(self, target_path: Path) -> None:
-        """Copy the faker executable to *target_path*.
+    def _write_source_helpers(self, parent: Path, created: list[Path]) -> None:
+        """Write the venv config and timer script the copied exe needs."""
+        pyvenv = parent / PYVENV_CFG
+        if not pyvenv.exists():
+            text = _source_pyvenv_text()
+            if text is not None:
+                pyvenv.write_text(text, encoding="utf-8")
+                created.append(pyvenv)
 
-        If the executable, timer script, or destination folder already exists,
-        it is overwritten cleanly instead of raising an error.
+        timer_script = parent / TIMER_SCRIPT
+        existed = timer_script.exists()
+        timer_script.write_text(_TIMER_PYW_CODE, encoding="utf-8")
+        if not existed:
+            created.append(timer_script)
+
+    def copy_exe_to(self, target_path: Path) -> None:
+        """Copy the faker executable and its helpers to *target_path*.
+
+        Every fake in one folder shares ``_orbifier_runtime_<version>``, so a
+        second fake reuses whatever a running first fake already loaded instead
+        of overwriting locked DLLs. If anything fails, only the files this call
+        created are removed; other fakes in the folder are left intact.
         """
         if not self._frozen:
             problem = _source_runtime_problem()
             if problem:
                 raise RuntimeError(problem)
 
-        if target_path.exists():
-            if target_path.is_dir():
+        target_path = Path(target_path)
+        parent = target_path.parent
+        created: list[Path] = []
+        staging: Path | None = None
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            if not self._frozen:
+                created.extend(_ensure_source_runtime(parent))
+
+            # Stage the exe beside the target so a failed copy never leaves a
+            # truncated game file behind, and a locked running fake is not
+            # replaced by a half-written one.
+            staging = parent / f"{target_path.name}.orbifier-tmp"
+            staging.unlink(missing_ok=True)
+            shutil.copy2(self._source_exe, staging)
+            if target_path.exists() and target_path.is_dir():
                 shutil.rmtree(target_path)
-            else:
+            os.replace(staging, target_path)
+            staging = None
+
+            if not self._frozen:
+                self._write_source_helpers(parent, created)
+        except Exception as exc:
+            if staging is not None:
                 try:
-                    target_path.unlink()
-                except Exception:
+                    staging.unlink(missing_ok=True)
+                except OSError:
                     pass
+            _remove_created(created)
+            if isinstance(exc, RuntimeError):
+                raise
+            raise RuntimeError(
+                f"Could not create {target_path.name} in {parent}: {exc}. "
+                "Close any running fake game or choose another folder."
+            ) from exc
 
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(self._source_exe, target_path)
-
-        if not self._frozen:
-            destination = target_path.parent / "pyvenv.cfg"
-            if not destination.exists():
-                # Inside a venv, copy pyvenv.cfg so pythonw.exe can locate the
-                # Python runtime. A Windows Store base install has no config
-                # next to it, so synthesize the same ``home`` pointer.
-                venv_candidates = [
-                    Path(sys.executable).parent.parent / "pyvenv.cfg",
-                    Path(sys.executable).parent / "pyvenv.cfg",
-                ]
-                source_cfg = next((p for p in venv_candidates if p.exists()), None)
-                try:
-                    if source_cfg is not None:
-                        shutil.copy2(source_cfg, destination)
-                    else:
-                        destination.write_text(
-                            f"home = {sys.base_prefix}\n", encoding="utf-8")
-                    self.created_helpers.add(destination.resolve())
-                except Exception:
-                    pass
-
-            # A copied interpreter looks for its DLLs next to the exe, not in
-            # the original install directory. Copy just the runtime/Tk files.
-            for source in _source_runtime_files():
-                helper = target_path.parent / source.name
-                shutil.copy2(source, helper)
-                self.created_helpers.add(helper.resolve())
-
-            # Tcl needs its script library too. Windows Store installs keep it
-            # inside WindowsApps, which the copied process cannot use, so make
-            # a local copy and point TCL_LIBRARY/TK_LIBRARY at it at launch.
-            tcl_dir, tk_dir = _source_tcl_dirs()
-            if sys.platform == "win32" and tcl_dir is not None and tk_dir is not None:
-                helper_root = target_path.parent / "_orbifier_tcl"
-                if helper_root.exists():
-                    shutil.rmtree(helper_root)
-                for source_dir in (tcl_dir, tk_dir):
-                    destination_dir = helper_root / source_dir.name
-                    shutil.copytree(source_dir, destination_dir)
-                    self.created_helpers.add(destination_dir.resolve())
-                self.created_helpers.add(helper_root.resolve())
-
-            timer_script = target_path.parent / "_orbifier_timer.pyw"
-            timer_script.write_text(_TIMER_PYW_CODE, encoding="utf-8")
-            self.created_helpers.add(timer_script.resolve())
+        self.created_helpers.update(path.resolve() for path in created)
 
     def game_path(self, exe_name: str, output_dir: Path | None = None) -> Path:
         """Resolve the same validated destination used by previews and creation."""
@@ -478,35 +654,10 @@ class GameFaker:
                 results["executable"] = (target, False)
 
             parent = target.parent
-            parent_resolved = parent.resolve()
-            helper_names = {"_orbifier_timer.pyw", "pyvenv.cfg"}
-            if not self._frozen:
-                helper_names.update(path.name for path in _source_runtime_files())
-                helper_names.update(
-                    path.name for path in self.created_helpers
-                    if path.parent == parent_resolved
-                )
-            for helper_name in sorted(helper_names):
-                h = parent / helper_name
-                if h.exists() and h.is_file():
-                    try:
-                        h.unlink()
-                        self.created_helpers.discard(h.resolve())
-                        results["helpers"].append(h)
-                    except Exception:
-                        pass
-
-            helper_root = parent / "_orbifier_tcl"
-            if helper_root.exists() and helper_root.is_dir():
-                resolved_root = helper_root.resolve()
-                try:
-                    shutil.rmtree(helper_root)
-                    for helper in list(self.created_helpers):
-                        if helper.is_relative_to(resolved_root):
-                            self.created_helpers.discard(helper)
-                    results["helpers"].append(helper_root)
-                except Exception:
-                    pass
+            removed_helpers = remove_owned_helpers(parent, tracked=self.created_helpers)
+            for helper in removed_helpers:
+                self.created_helpers.discard(Path(helper).resolve())
+            results["helpers"].extend(removed_helpers)
 
             desktop = Path(output_dir).expanduser().resolve() if output_dir else (self.desktop_path / config.FAKE_EXE_DIR).resolve()
             folder_deleted = False
@@ -576,7 +727,7 @@ class GameFaker:
                     "--auto-close", close_flag,
                 ]
             else:
-                timer_script = exe_path.parent / "_orbifier_timer.pyw"
+                timer_script = exe_path.parent / TIMER_SCRIPT
                 args = [
                     str(exe_path),
                     str(timer_script),

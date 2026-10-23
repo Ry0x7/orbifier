@@ -149,7 +149,11 @@ class QuestTracker:
                 for helper in quest.cleanup_files:
                     try:
                         helper_path = Path(helper)
-                        if not helper_path.is_relative_to(parent):
+                        # Only direct children of this quest's folder are owned
+                        # helpers: the shared runtime directory, the timer
+                        # script, and the venv config. A nested quest keeps its
+                        # own helpers.
+                        if helper_path.parent != parent:
                             continue
                         if helper_path.is_dir():
                             shutil.rmtree(helper_path, ignore_errors=True)
