@@ -365,8 +365,29 @@ def _source_runtime_dir(parent: Path) -> Path:
 
 
 def _runtime_dir_ready(runtime_dir: Path) -> bool:
-    """True once a runtime folder holds a complete, reusable copy."""
-    return (Path(runtime_dir) / RUNTIME_MARKER).is_file()
+    """True when a runtime folder holds every file a fake needs, complete."""
+    runtime_dir = Path(runtime_dir)
+    if not (runtime_dir / RUNTIME_MARKER).is_file():
+        return False
+    try:
+        if any(not (runtime_dir / source.name).is_file()
+               for source in _source_runtime_files()):
+            return False
+    except OSError:
+        return False
+    # A marker alone is not proof: an interrupted copy or an antivirus sweep
+    # can leave an empty Tcl/Tk tree behind, which makes every fake fail.
+    tcl_dir, tk_dir = _source_tcl_dirs()
+    for source_dir in (tcl_dir, tk_dir):
+        if source_dir is None:
+            continue
+        copied = runtime_dir / TCL_HELPER_DIR / source_dir.name
+        try:
+            if not any(copied.glob("*.tcl")):
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def _local_tcl_dirs(runtime_dir: Path) -> tuple[Path | None, Path | None]:
@@ -441,10 +462,14 @@ def _ensure_source_runtime(parent: Path) -> list[Path]:
         helper_root = runtime_dir / TCL_HELPER_DIR
         for source_dir in (tcl_dir, tk_dir):
             destination_dir = helper_root / source_dir.name
-            if destination_dir.is_dir():
+            if destination_dir.is_dir() and any(destination_dir.glob("*.tcl")):
                 continue
-            shutil.copytree(source_dir, destination_dir)
-            created.append(destination_dir)
+            existed = destination_dir.is_dir()
+            # Fill in a missing or interrupted copy without deleting files a
+            # running fake may have mapped.
+            shutil.copytree(source_dir, destination_dir, dirs_exist_ok=True)
+            if not existed:
+                created.append(destination_dir)
 
     marker = runtime_dir / RUNTIME_MARKER
     marker.write_text(
@@ -513,8 +538,27 @@ def remove_owned_helpers(parent: Path, tracked: set[Path] | None = None) -> list
         except OSError:
             pass
 
+    # Staging files from an interrupted create are never valid.
+    for stale in sorted(parent.glob("*.orbifier-tmp")):
+        if stale.is_file():
+            try:
+                stale.unlink()
+                removed.append(stale)
+            except OSError:
+                pass
+
     if _other_exe_remains(parent):
         return removed
+
+    # Older builds copied the Tcl tree beside the exe; it is app-owned and
+    # useless once the last fake is gone.
+    legacy_tcl = parent / TCL_HELPER_DIR
+    if legacy_tcl.is_dir():
+        try:
+            shutil.rmtree(legacy_tcl)
+            removed.append(legacy_tcl)
+        except OSError:
+            pass
 
     for runtime_dir in sorted(parent.glob(f"{RUNTIME_DIR_PREFIX}*")):
         if not runtime_dir.is_dir():
@@ -596,6 +640,7 @@ class GameFaker:
         parent = target_path.parent
         created: list[Path] = []
         staging: Path | None = None
+        wrote_target = False
         try:
             parent.mkdir(parents=True, exist_ok=True)
             if not self._frozen:
@@ -611,6 +656,7 @@ class GameFaker:
                 shutil.rmtree(target_path)
             os.replace(staging, target_path)
             staging = None
+            wrote_target = True
 
             if not self._frozen:
                 self._write_source_helpers(parent, created)
@@ -618,6 +664,13 @@ class GameFaker:
             if staging is not None:
                 try:
                     staging.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if wrote_target:
+                # A fake whose helpers could not be written would only die at
+                # launch; do not leave it behind.
+                try:
+                    target_path.unlink(missing_ok=True)
                 except OSError:
                     pass
             _remove_created(created)
@@ -629,6 +682,22 @@ class GameFaker:
             ) from exc
 
         self.created_helpers.update(path.resolve() for path in created)
+
+    def owned_helpers(self, parent: Path) -> set[Path]:
+        """App-owned helpers in *parent*, including ones from earlier runs.
+
+        ``created_helpers`` only knows what this process made, so a fake
+        launched after a restart would otherwise lose its cleanup targets.
+        """
+        parent = Path(parent).resolve()
+        helpers = {path for path in self.created_helpers if path.parent == parent}
+        for path in (parent / TIMER_SCRIPT, parent / PYVENV_CFG):
+            if path.is_file() and _is_owned_helper(path):
+                helpers.add(path)
+        for runtime_dir in parent.glob(f"{RUNTIME_DIR_PREFIX}*"):
+            if runtime_dir.is_dir():
+                helpers.add(runtime_dir)
+        return helpers
 
     def game_path(self, exe_name: str, output_dir: Path | None = None) -> Path:
         """Resolve the same validated destination used by previews and creation."""

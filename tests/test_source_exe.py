@@ -88,6 +88,34 @@ def test_copied_source_exe_starts_and_imports_tkinter(tmp_path):
     assert float(marker.read_text(encoding="utf-8")) >= 8.0
 
 
+def test_helper_failure_removes_the_written_exe(tmp_path, monkeypatch):
+    """A fake without its timer script would die at launch, so it is removed."""
+    source = tmp_path / "pythonw.exe"
+    source.write_bytes(b"pythonw")
+    monkeypatch.setattr(faker, "_is_frozen", lambda: False)
+    monkeypatch.setattr(faker, "_find_source_exe", lambda: source)
+    monkeypatch.setattr(faker, "_source_runtime_problem", lambda: None)
+    monkeypatch.setattr(faker, "_source_runtime_files", lambda: [])
+    monkeypatch.setattr(faker, "_source_tcl_dirs", lambda: (None, None))
+
+    real_write_text = Path.write_text
+
+    def guarded_write_text(self, *args, **kwargs):
+        if self.name == faker.TIMER_SCRIPT:
+            raise OSError("The file is in use by another process")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", guarded_write_text)
+    target = tmp_path / "Game.exe"
+
+    with pytest.raises(RuntimeError):
+        faker.GameFaker().copy_exe_to(target)
+
+    assert not target.exists()
+    assert not faker._source_runtime_dir(tmp_path).exists()
+    assert not list(tmp_path.glob("*.orbifier-tmp"))
+
+
 def test_create_fake_game_rejects_unsupported_source(tmp_path, monkeypatch):
     monkeypatch.setattr(faker, "_is_frozen", lambda: False)
     monkeypatch.setattr(faker, "_find_source_exe", lambda: tmp_path / "pythonw.exe")

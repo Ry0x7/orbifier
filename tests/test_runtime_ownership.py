@@ -158,6 +158,54 @@ def test_tracked_paths_are_removed_even_when_content_is_not_app_owned(tmp_path):
     assert not config.exists()
 
 
+def test_incomplete_runtime_is_repaired_before_reuse(tmp_path, runtime_sources):
+    """A short-circuiting marker must not hide a missing DLL or Tcl script."""
+    faker._ensure_source_runtime(tmp_path)
+    runtime_dir = faker._source_runtime_dir(tmp_path)
+    (runtime_dir / runtime_sources[0].name).unlink()
+    (runtime_dir / faker.TCL_HELPER_DIR / "tcl8.6" / "init.tcl").unlink()
+
+    assert faker._runtime_dir_ready(runtime_dir) is False
+    created = faker._ensure_source_runtime(tmp_path)
+
+    assert (runtime_dir / runtime_sources[0].name).is_file()
+    assert (runtime_dir / faker.TCL_HELPER_DIR / "tcl8.6" / "init.tcl").is_file()
+    assert faker._runtime_dir_ready(runtime_dir)
+    # The folder itself is reused, so a rollback must not own it.
+    assert runtime_dir not in created
+
+
+def test_remove_owned_helpers_sweeps_staging_and_legacy_tcl(tmp_path):
+    stale = tmp_path / "Game.exe.orbifier-tmp"
+    stale.write_bytes(b"half copied exe")
+    legacy_root = tmp_path / faker.TCL_HELPER_DIR
+    (legacy_root / "tcl8.6").mkdir(parents=True)
+    (legacy_root / "tcl8.6" / "init.tcl").write_text("tcl", encoding="utf-8")
+
+    removed = faker.remove_owned_helpers(tmp_path)
+
+    assert not stale.exists()
+    assert not legacy_root.exists()
+    assert set(removed) == {stale, legacy_root}
+
+
+def test_owned_helpers_are_discovered_after_a_restart(tmp_path, runtime_sources, monkeypatch):
+    source = tmp_path / "pythonw.exe"
+    source.write_bytes(b"pythonw")
+    monkeypatch.setattr(faker, "_is_frozen", lambda: False)
+    monkeypatch.setattr(faker, "_find_source_exe", lambda: source)
+    monkeypatch.setattr(faker, "_source_runtime_problem", lambda: None)
+    target = faker.GameFaker().create_fake_game("Game.exe", output_dir=tmp_path)
+
+    # A fresh instance has an empty created_helpers set, like after a restart.
+    helpers = faker.GameFaker().owned_helpers(tmp_path)
+
+    assert faker._source_runtime_dir(tmp_path) in helpers
+    assert (tmp_path / faker.TIMER_SCRIPT).resolve() in helpers
+    assert (tmp_path / faker.PYVENV_CFG).resolve() in helpers
+    assert target not in helpers
+
+
 def test_other_exe_remains_ignores_non_executables(tmp_path):
     (tmp_path / "notes.txt").write_text("not a game", encoding="utf-8")
     assert faker._other_exe_remains(tmp_path) is False
