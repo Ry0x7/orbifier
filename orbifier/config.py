@@ -33,7 +33,7 @@ def _get(name: str, default):
 
 
 # ── App identity ──────────────────────────────────────────────────────────────
-VERSION   = _get("VERSION",   "1.5.0")
+VERSION   = _get("VERSION",   "1.6.0")
 DEVELOPER = _get("DEVELOPER", "Ry0x7")
 
 # ── GitHub repo ───────────────────────────────────────────────────────────────
